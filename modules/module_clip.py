@@ -321,6 +321,20 @@ class VisualTransformer(nn.Module):
 
         return x
 
+class ResidualMLP(nn.Module):
+    def __init__(self, input_dim, hidden_dim):
+        super(ResidualMLP, self).__init__()
+        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, input_dim)
+        self.relu = nn.ReLU()
+
+    def forward(self, x):
+        residual = x
+        x = self.fc1(x)
+        x = self.relu(x)
+        x = self.fc2(x)
+        x = x + residual
+        return x
 
 class CLIP(nn.Module):
     def __init__(self,
@@ -380,6 +394,7 @@ class CLIP(nn.Module):
         self.logit_scale = nn.Parameter(torch.ones([]))
 
         self.initialize_parameters()
+        self.residual_mlp = ResidualMLP(embed_dim, embed_dim)
 
     def initialize_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
@@ -447,16 +462,13 @@ class CLIP(nn.Module):
     def dtype(self):
         return self.visual.conv1.weight.dtype
 
-    def encode_image(self, image, return_hidden=False, video_frame=-1):
-        hidden = self.visual(image.type(self.dtype), video_frame=video_frame)
-        hidden = self.visual.ln_post(hidden) @ self.visual.proj
-
-        x = hidden[:, 0, :]
+    def encode_image(self, image_features, return_hidden=False):
+        # Apply the residual MLP
+        image_features = self.residual_mlp(image_features)
 
         if return_hidden:
-            return x, hidden
-
-        return x
+            return image_features, None
+        return image_features
 
     def encode_text(self, text, return_hidden=False):
         x = self.token_embedding(text).type(self.dtype)  # [batch_size, n_ctx, d_model]
