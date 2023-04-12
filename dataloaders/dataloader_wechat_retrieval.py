@@ -18,6 +18,7 @@ class Wechat_DataLoader(Dataset):
     def __init__(
             self,
             json_path,
+            features_path,
             tokenizer,
             max_words=30,
             feature_framerate=1.0,
@@ -26,14 +27,20 @@ class Wechat_DataLoader(Dataset):
             image_resolution=224,
             frame_order=0,
             slice_framepos=0,
+            subset="train",
     ):
         # todo1: need to preprocess the data
         # self.csv = pd.read_csv(csv_path)
+        if subset == "train":   
+            self.json_path = os.path.join(json_path, "train_list.txt")
+        else:
+            self.json_path = os.path.join(json_path, "test_list.txt")
         self.data = json.load(open(json_path, 'r'))
         self.feature_framerate = feature_framerate
         self.max_words = max_words
         self.max_frames = max_frames
         self.tokenizer = tokenizer
+        self.zip_feat_path = features_path
         # 0: ordinary order; 1: reverse order; 2: random order.
         self.frame_order = frame_order
         assert self.frame_order in [0, 1, 2]
