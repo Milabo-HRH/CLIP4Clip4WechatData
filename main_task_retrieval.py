@@ -43,7 +43,7 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
     parser.add_argument('--video_dim', type=int, default=1024, help='video feature dimension')
     parser.add_argument('--seed', type=int, default=42, help='random seed')
     parser.add_argument('--max_words', type=int, default=20, help='')
-    parser.add_argument('--max_frames', type=int, default=100, help='')
+    parser.add_argument('--max_frames', type=int, default=32, help='')
     parser.add_argument('--feature_framerate', type=int, default=1, help='')
     parser.add_argument('--margin', type=float, default=0.1, help='margin for loss')
     parser.add_argument('--hard_negative_rate', type=float, default=0.5, help='rate of intra negative sample')
@@ -551,6 +551,14 @@ def main():
         
         global_step = 0
         for epoch in range(resumed_epoch, args.epochs):
+            if args.initmodel is None and epoch==0:
+                # Freeze all parameters in the CLIP model
+                for param in model.parameters():
+                    param.requires_grad = False
+
+                # Unfreeze the parameters in the ResidualMLP
+                for param in model.residual_mlp.parameters():
+                    param.requires_grad = True
             train_sampler.set_epoch(epoch)
             tr_loss, global_step = train_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
                                                scheduler, global_step, local_rank=args.local_rank)
@@ -568,7 +576,27 @@ def main():
                     best_score = R1
                     best_output_model_file = output_model_file
                 logger.info("The best model is: {}, the R1 is: {:.4f}".format(best_output_model_file, best_score))
+            if args.initmodel is None and epoch==0:
+                # Unfreeze all parameters in the CLIP model
+                if hasattr(model, "clip") and args.freeze_layer_num > -1:
+                    for name, param in model.clip.named_parameters():
+                # top layers always need to train
+                        if name.find("ln_final.") == 0 or name.find("text_projection") == 0 or name.find("logit_scale") == 0 \
+                            or name.find("visual.ln_post.") == 0 or name.find("visual.proj") == 0:
+                            continue    # need to train
+                        elif name.find("visual.transformer.resblocks.") == 0 or name.find("transformer.resblocks.") == 0:
+                            layer_num = int(name.split(".resblocks.")[1].split(".")[0])
+                            if layer_num >= args.freeze_layer_num:
+                                continue    # need to train
 
+                        if args.linear_patch == "3d" and name.find("conv2."):
+                            continue
+                        else:
+                        # paramenters which < freeze_layer_num will be freezed
+                            param.requires_grad = False
+                else:
+                    for param in model.parameters():
+                        param.requires_grad = True
         ## Uncomment if want to test on the best checkpoint
         # if args.local_rank == 0:
         #     model = load_model(-1, args, n_gpu, device, model_file=best_output_model_file)
