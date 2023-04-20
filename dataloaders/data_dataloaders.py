@@ -259,6 +259,7 @@ def dataloader_Wechat_train(args, tokenizer):
         frame_order=args.train_frame_order,
         slice_framepos=args.slice_framepos,
         ocr = False,
+        num_thread_reader = args.num_thread_reader,
     )
 
     train_sampler = torch.utils.data.distributed.DistributedSampler(wechat_dataset)

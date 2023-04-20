@@ -14,6 +14,7 @@ from modules.tokenization_clip import SimpleTokenizer as ClipTokenizer
 from modules.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from modules.modeling import CLIP4Clip
 from modules.optimization import BertAdam
+from cn_clip.clip import _tokenizer as tokenizer
 
 from util import parallel_apply, get_logger
 from dataloaders.data_dataloaders import DATALOADER_DICT
@@ -463,9 +464,11 @@ def main():
     global logger
     args = get_args()
     args = set_seed_logger(args)
+    
+    args.local_device_rank = max(args.local_rank, 0)
     device, n_gpu = init_device(args, args.local_rank)
 
-    tokenizer = ClipTokenizer()
+    # tokenizer = FullTokenizer()
 
     assert  args.task_type == "retrieval"
     model = init_model(args, device, n_gpu, args.local_rank)
@@ -525,6 +528,8 @@ def main():
     ## ####################################
     if args.do_train:
         train_dataloader, train_length, train_sampler = DATALOADER_DICT[args.datatype]["train"](args, tokenizer)
+        # print("train length: {}".format(len(train_dataloader)))
+        # exit(1)
         num_train_optimization_steps = (int(len(train_dataloader) + args.gradient_accumulation_steps - 1)
                                         / args.gradient_accumulation_steps) * args.epochs
 
@@ -551,14 +556,18 @@ def main():
         
         global_step = 0
         for epoch in range(resumed_epoch, args.epochs):
-            if args.initmodel is None and epoch==0:
-                # Freeze all parameters in the CLIP model
-                for param in model.parameters():
-                    param.requires_grad = False
+            # if args.init_model is None and epoch==0:
+            #     # Freeze all parameters in the CLIP model
+            #     for param in model.parameters():
+            #         # print(param)
+            #         param.requires_grad = False
 
-                # Unfreeze the parameters in the ResidualMLP
-                for param in model.residual_mlp.parameters():
-                    param.requires_grad = True
+            #     # Unfreeze the parameters in the ResidualMLP
+            #     for name, param in model.named_parameters():
+            #         if(name.startswith("module.residual_mlp")):
+            #             # print(name)
+            #             param.requires_grad = True
+            #     # exit(1)
             train_sampler.set_epoch(epoch)
             tr_loss, global_step = train_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
                                                scheduler, global_step, local_rank=args.local_rank)
@@ -576,27 +585,27 @@ def main():
                     best_score = R1
                     best_output_model_file = output_model_file
                 logger.info("The best model is: {}, the R1 is: {:.4f}".format(best_output_model_file, best_score))
-            if args.initmodel is None and epoch==0:
-                # Unfreeze all parameters in the CLIP model
-                if hasattr(model, "clip") and args.freeze_layer_num > -1:
-                    for name, param in model.clip.named_parameters():
-                # top layers always need to train
-                        if name.find("ln_final.") == 0 or name.find("text_projection") == 0 or name.find("logit_scale") == 0 \
-                            or name.find("visual.ln_post.") == 0 or name.find("visual.proj") == 0:
-                            continue    # need to train
-                        elif name.find("visual.transformer.resblocks.") == 0 or name.find("transformer.resblocks.") == 0:
-                            layer_num = int(name.split(".resblocks.")[1].split(".")[0])
-                            if layer_num >= args.freeze_layer_num:
-                                continue    # need to train
+            # if args.init_model is None and epoch==0:
+            #     # Unfreeze all parameters in the CLIP model
+            #     if hasattr(model, "clip") and args.freeze_layer_num > -1:
+            #         for name, param in model.clip.named_parameters():
+            #     # top layers always need to train
+            #             if name.find("ln_final.") == 0 or name.find("text_projection") == 0 or name.find("logit_scale") == 0 \
+            #                 or name.find("visual.ln_post.") == 0 or name.find("visual.proj") == 0:
+            #                 continue    # need to train
+            #             elif name.find("visual.transformer.resblocks.") == 0 or name.find("transformer.resblocks.") == 0:
+            #                 layer_num = int(name.split(".resblocks.")[1].split(".")[0])
+            #                 if layer_num >= args.freeze_layer_num:
+            #                     continue    # need to train
 
-                        if args.linear_patch == "3d" and name.find("conv2."):
-                            continue
-                        else:
-                        # paramenters which < freeze_layer_num will be freezed
-                            param.requires_grad = False
-                else:
-                    for param in model.parameters():
-                        param.requires_grad = True
+            #             if args.linear_patch == "3d" and name.find("conv2."):
+            #                 continue
+            #             else:
+            #             # paramenters which < freeze_layer_num will be freezed
+            #                 param.requires_grad = False
+            #     else:
+            #         for param in model.parameters():
+            #             param.requires_grad = True
         ## Uncomment if want to test on the best checkpoint
         # if args.local_rank == 0:
         #     model = load_model(-1, args, n_gpu, device, model_file=best_output_model_file)

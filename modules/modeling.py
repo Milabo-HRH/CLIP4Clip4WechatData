@@ -3,16 +3,18 @@ from __future__ import division
 from __future__ import print_function
 
 import logging
-
+import json
 import torch
 from torch import nn
-
+from collections import OrderedDict
 from modules.until_module import PreTrainedModel, AllGather, CrossEn
 from modules.module_cross import CrossModel, CrossConfig, Transformer as TransformerClip
 
-from modules.module_clip import CLIP, convert_weights
+from modules.module_clip import CLIP, convert_weights, ResidualMLP
 from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
-
+from cn_clip.clip.model import CLIP as cn_CLIP, convert_weights as cn_convert_weights, resize_pos_embed, convert_state_dict as cn_convert_staet_dicts
+from cn_clip.training.train import get_clip_loss
+from cn_clip.clip.model import LayerNorm, QuickGELU
 logger = logging.getLogger(__name__)
 allgather = AllGather.apply
 
@@ -41,7 +43,14 @@ class CLIP4ClipPreTrainedModel(PreTrainedModel, nn.Module):
         pretrained_clip_name = "ViT-B/32"
         if hasattr(task_config, 'pretrained_clip_name'):
             pretrained_clip_name = task_config.pretrained_clip_name
-        clip_state_dict = CLIP.get_config(pretrained_clip_name=pretrained_clip_name)
+        # clip_state_dict = CLIP.get_config(pretrained_clip_name=pretrained_clip_name)
+        checkpoint = torch.load(pretrained_clip_name, map_location="cpu")
+        sd = {k: v for k, v in checkpoint["state_dict"].items() if "bert.pooler" not in k}
+        # Resize the positional embedding by interpolation, if needed
+        # resize_pos_embed(sd, model, prefix="module.")
+        if next(iter(sd.items()))[0].startswith('module'):
+            clip_state_dict = {k[len('module.'):]: v for k, v in sd.items() if "bert.pooler" not in k}
+        # clip_state_dict = cn_convert_staet_dicts(sd)
         for key, val in clip_state_dict.items():
             new_key = "clip." + key
             if new_key not in state_dict:
@@ -120,9 +129,9 @@ class CLIP4ClipPreTrainedModel(PreTrainedModel, nn.Module):
                             state_dict[key.replace("transformer.", "transformerClip.")] = val.clone()
                             continue
         ## <=== End of initialization trick
-
-        if state_dict is not None:
-            model = cls.init_preweight(model, state_dict, task_config=task_config)
+        # resize_pos_embed(sd, model, prefix="module.")
+        # if state_dict is not None:
+        #     model = cls.init_preweight(model, state_dict, task_config=task_config)
 
         return model
 
@@ -151,51 +160,75 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
 
         self._stage_one = True
         self._stage_two = False
-
+        
         show_log(task_config, "Stage-One:{}, Stage-Two:{}".format(self._stage_one, self._stage_two))
 
         self.loose_type = False
         if self._stage_one and check_attr('loose_type', self.task_config):
             self.loose_type = True
             show_log(task_config, "Test retrieval by loose type.")
+        loss_img = nn.CrossEntropyLoss()
+        loss_txt = nn.CrossEntropyLoss()
 
+        self.loss_img = loss_img.cuda(task_config.__dict__["local_device_rank"])
+        self.loss_txt = loss_txt.cuda(task_config.__dict__["local_device_rank"])
+        self.ln_1 = LayerNorm((task_config.__dict__["max_frames"],768))
+        self.mlp = nn.Sequential(OrderedDict([
+            ("c_fc", nn.Linear(768, 768 * 4)),
+            ("gelu", QuickGELU()),
+            ("c_proj", nn.Linear(768 * 4, 512))
+            # ("c_fc", nn.Linear(768, 512)),
+        ]))
+        self.ln_2 = LayerNorm((task_config.__dict__["max_frames"],512))
+        
+        with open("./cn_clip/clip/model_configs/ViT-B-16.json", 'r') as fv, open("./cn_clip/clip/model_configs/RoBERTa-wwm-ext-base-chinese.json", 'r') as ft:
+            model_info = json.load(fv)
+            if isinstance(model_info['vision_layers'], str):
+                model_info['vision_layers'] = eval(model_info['vision_layers'])         
+            for k, v in json.load(ft).items():
+                model_info[k] = v
+        model_info['use_flash_attention'] = False
+        self.residual_mlp = ResidualMLP(model_info['embed_dim'], model_info['embed_dim']*4)
+        self.clip = cn_CLIP(**model_info)
+        resize_pos_embed(clip_state_dict, self.clip, prefix="module.")
+        self.clip.load_state_dict(clip_state_dict)
         # CLIP Encoders: From OpenAI: CLIP [https://github.com/openai/CLIP] ===>
-        vit = "visual.proj" in clip_state_dict
-        assert vit
-        if vit:
-            vision_width = clip_state_dict["visual.conv1.weight"].shape[0]
-            vision_layers = len(
-                [k for k in clip_state_dict.keys() if k.startswith("visual.") and k.endswith(".attn.in_proj_weight")])
-            vision_patch_size = clip_state_dict["visual.conv1.weight"].shape[-1]
-            grid_size = round((clip_state_dict["visual.positional_embedding"].shape[0] - 1) ** 0.5)
-            image_resolution = vision_patch_size * grid_size
-        else:
-            counts: list = [len(set(k.split(".")[2] for k in clip_state_dict if k.startswith(f"visual.layer{b}"))) for b in
-                            [1, 2, 3, 4]]
-            vision_layers = tuple(counts)
-            vision_width = clip_state_dict["visual.layer1.0.conv1.weight"].shape[0]
-            output_width = round((clip_state_dict["visual.attnpool.positional_embedding"].shape[0] - 1) ** 0.5)
-            vision_patch_size = None
-            assert output_width ** 2 + 1 == clip_state_dict["visual.attnpool.positional_embedding"].shape[0]
-            image_resolution = output_width * 32
+        # vit = "visual.proj" in clip_state_dict
+        # assert vit
+        # if vit:
+        #     vision_width = clip_state_dict["visual.conv1.weight"].shape[0]
+        #     vision_layers = len(
+        #         [k for k in clip_state_dict.keys() if k.startswith("visual.") and k.endswith(".attn.in_proj_weight")])
+        #     vision_patch_size = clip_state_dict["visual.conv1.weight"].shape[-1]
+        #     grid_size = round((clip_state_dict["visual.positional_embedding"].shape[0] - 1) ** 0.5)
+        #     image_resolution = vision_patch_size * grid_size
+        # else:
+        #     counts: list = [len(set(k.split(".")[2] for k in clip_state_dict if k.startswith(f"visual.layer{b}"))) for b in
+        #                     [1, 2, 3, 4]]
+        #     vision_layers = tuple(counts)
+        #     vision_width = clip_state_dict["visual.layer1.0.conv1.weight"].shape[0]
+        #     output_width = round((clip_state_dict["visual.attnpool.positional_embedding"].shape[0] - 1) ** 0.5)
+        #     vision_patch_size = None
+        #     assert output_width ** 2 + 1 == clip_state_dict["visual.attnpool.positional_embedding"].shape[0]
+        #     image_resolution = output_width * 32
 
-        embed_dim = clip_state_dict["text_projection"].shape[1]
-        context_length = clip_state_dict["positional_embedding"].shape[0]
-        vocab_size = clip_state_dict["token_embedding.weight"].shape[0]
-        transformer_width = clip_state_dict["ln_final.weight"].shape[0]
-        transformer_heads = transformer_width // 64
-        transformer_layers = len(set(k.split(".")[2] for k in clip_state_dict if k.startswith(f"transformer.resblocks")))
+        # embed_dim = clip_state_dict["text_projection"].shape[1]
+        # context_length = clip_state_dict["positional_embedding"].shape[0]
+        # vocab_size = clip_state_dict["token_embedding.weight"].shape[0]
+        # transformer_width = clip_state_dict["ln_final.weight"].shape[0]
+        # transformer_heads = transformer_width // 64
+        # transformer_layers = len(set(k.split(".")[2] for k in clip_state_dict if k.startswith(f"transformer.resblocks")))
 
-        show_log(task_config, "\t embed_dim: {}".format(embed_dim))
-        show_log(task_config, "\t image_resolution: {}".format(image_resolution))
-        show_log(task_config, "\t vision_layers: {}".format(vision_layers))
-        show_log(task_config, "\t vision_width: {}".format(vision_width))
-        show_log(task_config, "\t vision_patch_size: {}".format(vision_patch_size))
-        show_log(task_config, "\t context_length: {}".format(context_length))
-        show_log(task_config, "\t vocab_size: {}".format(vocab_size))
-        show_log(task_config, "\t transformer_width: {}".format(transformer_width))
-        show_log(task_config, "\t transformer_heads: {}".format(transformer_heads))
-        show_log(task_config, "\t transformer_layers: {}".format(transformer_layers))
+        # show_log(task_config, "\t embed_dim: {}".format(embed_dim))
+        # show_log(task_config, "\t image_resolution: {}".format(image_resolution))
+        # show_log(task_config, "\t vision_layers: {}".format(vision_layers))
+        # show_log(task_config, "\t vision_width: {}".format(vision_width))
+        # show_log(task_config, "\t vision_patch_size: {}".format(vision_patch_size))
+        # show_log(task_config, "\t context_length: {}".format(context_length))
+        # show_log(task_config, "\t vocab_size: {}".format(vocab_size))
+        # show_log(task_config, "\t transformer_width: {}".format(transformer_width))
+        # show_log(task_config, "\t transformer_heads: {}".format(transformer_heads))
+        # show_log(task_config, "\t transformer_layers: {}".format(transformer_layers))
 
         self.linear_patch = '2d'
         if hasattr(task_config, "linear_patch"):
@@ -205,18 +238,18 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
         # use .float() to avoid overflow/underflow from fp16 weight. https://github.com/openai/CLIP/issues/40
         cut_top_layer = 0
         show_log(task_config, "\t cut_top_layer: {}".format(cut_top_layer))
-        self.clip = CLIP(
-            embed_dim,
-            image_resolution, vision_layers-cut_top_layer, vision_width, vision_patch_size,
-            context_length, vocab_size, transformer_width, transformer_heads, transformer_layers-cut_top_layer,
-            linear_patch=self.linear_patch
-        ).float()
+        # self.clip = CLIP(
+        #     embed_dim,
+        #     image_resolution, vision_layers-cut_top_layer, vision_width, vision_patch_size,
+        #     context_length, vocab_size, transformer_width, transformer_heads, transformer_layers-cut_top_layer,
+        #     linear_patch=self.linear_patch
+        # ).float()
 
         for key in ["input_resolution", "context_length", "vocab_size"]:
             if key in clip_state_dict:
                 del clip_state_dict[key]
 
-        convert_weights(self.clip)
+        # cn_convert_weights(self.clip)
         # <=== End of CLIP Encoders
 
         self.sim_header = 'meanP'
@@ -225,7 +258,7 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
             show_log(task_config, "\t sim_header: {}".format(self.sim_header))
         if self.sim_header == "tightTransf": assert self.loose_type is False
 
-        cross_config.max_position_embeddings = context_length
+        cross_config.max_position_embeddings = 77
         if self.loose_type is False:
             # Cross Encoder ===>
             cross_config = update_attr("cross_config", cross_config, "num_hidden_layers", self.task_config, "cross_num_hidden_layers")
@@ -254,22 +287,35 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
 
         # T x 3 x H x W
         video = torch.as_tensor(video).float()
-        b, pair, bs, ts, channel, h, w = video.shape
-        video = video.view(b * pair * bs * ts, channel, h, w)
-        video_frame = bs * ts
+        # b, pair, bs, ts, channel, h, w = video.shape
+        # video = video.view(b * pair * bs * ts, channel, h, w)
+        video_frame = video.shape[1]
 
         sequence_output, visual_output = self.get_sequence_visual_output(input_ids, token_type_ids, attention_mask,
                                                                          video, video_mask, shaped=True, video_frame=video_frame)
 
         if self.training:
-            loss = 0.
-            sim_matrix, *_tmp = self.get_similarity_logits(sequence_output, visual_output, attention_mask, video_mask,
-                                                    shaped=True, loose_type=self.loose_type)
-            sim_loss1 = self.loss_fct(sim_matrix)
-            sim_loss2 = self.loss_fct(sim_matrix.T)
-            sim_loss = (sim_loss1 + sim_loss2) / 2
-            loss += sim_loss
+            # loss = 0.
+            # sim_matrix, *_tmp = self.get_similarity_logits(sequence_output, visual_output, attention_mask, video_mask,
+            #                                         shaped=True, loose_type=self.loose_type)
+            # sim_loss1 = self.loss_fct(sim_matrix)
+            # sim_loss2 = self.loss_fct(sim_matrix.T)
+            # sim_loss = (sim_loss1 + sim_loss2) / 2
+            # loss += sim_loss
+            visual_output = allgather(visual_output, self.task_config)
+            video_mask = allgather(video_mask, self.task_config)
+            sequence_output = allgather(sequence_output, self.task_config)
+            torch.distributed.barrier()
 
+            visual_output = visual_output / visual_output.norm(dim=-1, keepdim=True)
+            visual_output = self._mean_pooling_for_similarity_visual(visual_output, video_mask)
+            visual_output = visual_output / visual_output.norm(dim=-1, keepdim=True)
+
+            sequence_output = sequence_output.squeeze(1)
+            sequence_output = sequence_output / sequence_output.norm(dim=-1, keepdim=True)
+
+            logit_scale = self.clip.logit_scale.exp()
+            loss = get_clip_loss(self.clip, visual_output, sequence_output, logit_scale, self.loss_img, self.loss_txt, args=self.task_config)
             return loss
         else:
             return None
@@ -286,6 +332,43 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
 
         return sequence_hidden
 
+    def encode_image(self, image_features, return_hidden=False, video_frame=-1):
+        # Apply the residual MLP
+        if torch.isnan(image_features).any():
+            print("image_features is nan")
+            exit(1)
+        # print(torch.min(image_features))
+        image_features = self.ln_1(image_features)
+        
+        if torch.isnan(image_features).any():
+            print("ln1 is nan")
+            print(image_features)
+            exit(1)
+        image_features = self.mlp(image_features)
+        if torch.isnan(image_features).any():
+            print("mlp is nan")
+            exit(1)
+        image_features = self.ln_2(image_features)
+        if torch.isnan(image_features).any():
+            print("ln2 is nan")
+            exit(1)
+        # print(image_features.shape)
+        if torch.isnan(image_features).any():
+            print("image_features is nan")
+            exit(1)
+        # if return_hidden:
+        #     return image_features, None
+        #x = x @ self.proj
+        
+        # if torch.isnan(self.clip.visual.proj.float()).any():
+        #     print("self.clip.visual.proj.float() is nan")
+        #     exit(1)
+        # image_features = (image_features)@self.clip.visual.proj.float()
+        # if torch.isnan(image_features).any():
+        #     print("After proj image_features is nan")
+        #     exit(1)
+        return image_features
+    
     def get_visual_output(self, video, video_mask, shaped=False, video_frame=-1):
         if shaped is False:
             video_mask = video_mask.view(-1, video_mask.shape[-1])
@@ -295,7 +378,7 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
             video_frame = bs * ts
 
         bs_pair = video_mask.size(0)
-        visual_hidden = self.clip.encode_image(video, video_frame=video_frame).float()
+        visual_hidden = self.encode_image(video, video_frame=video_frame).float()
         visual_hidden = visual_hidden.view(bs_pair, -1, visual_hidden.size(-1))
 
         return visual_hidden

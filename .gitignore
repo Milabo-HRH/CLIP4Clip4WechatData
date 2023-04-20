@@ -1,6 +1,6 @@
 .git
 .idea
-modules/clip_cn_vit-b-16.pt
+*.pt
 modules/__pycache__/*
 data/*
 __pycache__/*

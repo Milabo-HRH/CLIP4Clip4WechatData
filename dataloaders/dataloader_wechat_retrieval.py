@@ -11,6 +11,7 @@ import copy
 import json
 import random
 import zipfile
+import torch
 from io import BytesIO
 
 
@@ -28,6 +29,7 @@ class Wechat_DataLoader(Dataset):
             frame_order=0,
             slice_framepos=0,
             subset="train",
+            num_thread_reader=1,
     ):
         # todo1: need to preprocess the data
         # self.csv = pd.read_csv(csv_path)
@@ -35,7 +37,7 @@ class Wechat_DataLoader(Dataset):
             self.json_path = os.path.join(json_path, "pretrain.json")
         else:
             self.json_path = os.path.join(json_path, "labeled.json")
-        self.data = json.load(open(json_path, 'r'))
+        self.data = json.load(open(self.json_path, 'r'))
         self.feature_framerate = feature_framerate
         self.max_words = max_words
         self.max_frames = max_frames
@@ -47,17 +49,20 @@ class Wechat_DataLoader(Dataset):
         # 0: cut from head frames; 1: cut from tail frames; 2: extract frames uniformly.
         self.slice_framepos = slice_framepos
         assert self.slice_framepos in [0, 1, 2]
-        self.num_workers = args.num_thread_reader
+        self.num_workers = num_thread_reader
         if self.num_workers > 0:
             # lazy initialization for zip_handler to avoid multiprocessing-reading error
-            self.handles = [None for _ in range(args.num_workers)]
+            self.handles = [None for _ in range(self.num_workers)]
         else:
             self.handles = zipfile.ZipFile(self.zip_feat_path, 'r')
-
-        self.ocr = ocr
-        train_video_ids = list(self.data['id'].values)
         self.sample_len = len(self.data)
-        self.SPECIAL_TOKEN = {"CLS_TOKEN": "<|startoftext|>", "SEP_TOKEN": "<|endoftext|>",
+        self.ocr = ocr
+        # print(self.data[0])
+        # self.data = {key: [d.get(key, None) for d in self.data] for key in self.data[0]}
+
+        # train_video_ids = self.data['id']
+        
+        self.SPECIAL_TOKEN = {"CLS_TOKEN": "[CLS]", "SEP_TOKEN": "[SEP]",
                               "MASK_TOKEN": "[MASK]", "UNK_TOKEN": "[UNK]", "PAD_TOKEN": "[PAD]"}
 
     def __len__(self):
@@ -76,7 +81,7 @@ class Wechat_DataLoader(Dataset):
                 words = self.tokenizer.tokenize("")
                 pass
             else:
-                words = self.tokenizer.tokenize(data[video_id]['title'])
+                words = self.tokenizer.tokenize(self.data[video_id]['title'])
 
             words = [self.SPECIAL_TOKEN["CLS_TOKEN"]] + words
             total_length_with_CLS = self.max_words - 1
@@ -115,25 +120,20 @@ class Wechat_DataLoader(Dataset):
         raw_feats = raw_feats.astype(np.float32)  # float16 to float32
         num_frames, feat_dim = raw_feats.shape
 
-        feat = np.zeros((self.max_frame, feat_dim), dtype=np.float32)
-        mask = np.ones((self.max_frame,), dtype=np.int32)
-        if num_frames <= self.max_frame:
+        feat = np.zeros((self.max_frames, feat_dim), dtype=np.float32)
+        mask = np.ones((self.max_frames,), dtype=np.int32)
+        if num_frames <= self.max_frames:
             feat[:num_frames] = raw_feats
             mask[num_frames:] = 0
         else:
             # if the number of frames exceeds the limitation, we need to sample
             # the frames.
-            if self.test_mode:
+            # if self.test_mode:
                 # uniformly sample when test mode is True
-                step = num_frames // self.max_frame
-                select_inds = list(range(0, num_frames, step))
-                select_inds = select_inds[:self.max_frame]
-            else:
-                # randomly sample when test mode is False
-                select_inds = list(range(num_frames))
-                random.shuffle(select_inds)
-                select_inds = select_inds[:self.max_frame]
-                select_inds = sorted(select_inds)
+            step = num_frames // self.max_frames
+            select_inds = list(range(0, num_frames, step))
+            select_inds = select_inds[:self.max_frames]
+        
             for i, j in enumerate(select_inds):
                 feat[i] = raw_feats[j]
         feat = torch.FloatTensor(feat)

@@ -13,8 +13,7 @@ from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 from torch import nn
-
-
+from modules.until_module import align_state_dicts
 _MODELS = {
     "RN50": "https://openaipublic.azureedge.net/clip/models/afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762/RN50.pt",
     "RN101": "https://openaipublic.azureedge.net/clip/models/8fa8567bab74a42d41c5915025a8e4538c3bdbe8804a470a72f30b0d94fab599/RN101.pt",
@@ -324,18 +323,16 @@ class VisualTransformer(nn.Module):
 class ResidualMLP(nn.Module):
     def __init__(self, input_dim, hidden_dim):
         super(ResidualMLP, self).__init__()
-        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        self.fc1 = nn.Linear(768, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, input_dim)
         self.dropout = nn.Dropout(p=0.1)
         self.relu = nn.ReLU()
 
     def forward(self, x):
-        residual = x
         x = self.fc1(x)
         x = self.relu(x)
         x = self.dropout(x)
         x = self.fc2(x)
-        x = x + residual
         return x
 
 class CLIP(nn.Module):
@@ -443,13 +440,18 @@ class CLIP(nn.Module):
             else:
                 raise RuntimeError(f"Model {pretrained_clip_name} not found; available models = {available_models()}")
 
-        try:
-            # loading JIT archive
-            model = torch.jit.load(model_path, map_location="cpu").eval()
-            state_dict = model.state_dict()
-        except RuntimeError:
-            state_dict = torch.load(model_path, map_location="cpu")
-
+        # try:
+        #     # loading JIT archive
+        #     model = torch.jit.load(model_path, map_location="cpu").eval()
+        #     state_dict = model.state_dict()
+        # except RuntimeError:
+        #     state_dict = torch.load(model_path, map_location="cpu")
+        state_dict = torch.load(model_path, map_location="cpu")['state_dict']
+        for k in list(state_dict.keys()):
+            if k.startswith("module."):
+                state_dict[k[len("module."):]] = state_dict[k]
+                del state_dict[k]
+        align_state_dicts(state_dict)
         return state_dict
 
     def build_attention_mask(self, context_length):
