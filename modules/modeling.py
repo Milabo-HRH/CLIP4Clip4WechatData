@@ -369,7 +369,7 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
         #     exit(1)
         return image_features
     
-    def get_visual_output(self, video, video_mask, shaped=False, video_frame=-1):
+    def get_visual_output(self, video, video_mask, shaped=True, video_frame=-1):
         if shaped is False:
             video_mask = video_mask.view(-1, video_mask.shape[-1])
             video = torch.as_tensor(video).float()
@@ -383,7 +383,7 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
 
         return visual_hidden
 
-    def get_sequence_visual_output(self, input_ids, token_type_ids, attention_mask, video, video_mask, shaped=False, video_frame=-1):
+    def get_sequence_visual_output(self, input_ids, token_type_ids, attention_mask, video, video_mask, shaped=True, video_frame=-1):
         if shaped is False:
             input_ids = input_ids.view(-1, input_ids.shape[-1])
             token_type_ids = token_type_ids.view(-1, token_type_ids.shape[-1])
