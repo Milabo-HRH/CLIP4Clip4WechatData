@@ -187,7 +187,7 @@ def init_model(args, device, n_gpu, local_rank):
                 logger.info("Model loaded from %s", args.res)
         # Prepare model
         cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed')
-        model = model.load_state_dict(model_state_dict)
+        model.load_state_dict(model_state_dict)
 
         # model.to(device)
         # return model
