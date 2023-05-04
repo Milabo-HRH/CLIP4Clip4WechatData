@@ -580,11 +580,11 @@ def main():
                 # logger.info("Eval on val dataset")
                 # R1 = eval_epoch(args, model, val_dataloader, device, n_gpu)
 
-                R1 = eval_epoch(args, model, test_dataloader, device, n_gpu)
-                if best_score <= R1:
-                    best_score = R1
-                    best_output_model_file = output_model_file
-                logger.info("The best model is: {}, the R1 is: {:.4f}".format(best_output_model_file, best_score))
+                # R1 = eval_epoch(args, model, test_dataloader, device, n_gpu)
+                # if best_score <= R1:
+                #     best_score = R1
+                #     best_output_model_file = output_model_file
+                # logger.info("The best model is: {}, the R1 is: {:.4f}".format(best_output_model_file, best_score))
             # if args.init_model is None and epoch==0:
             #     # Unfreeze all parameters in the CLIP model
             #     if hasattr(model, "clip") and args.freeze_layer_num > -1:
