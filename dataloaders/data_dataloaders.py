@@ -287,10 +287,11 @@ def dataloader_Wechat_test(args, tokenizer, subset="test"):
         frame_order=args.eval_frame_order,
         slice_framepos=args.slice_framepos,
         ocr = False,
+        num_thread_reader = args.num_thread_reader,
     )
     dataloader_wechat = DataLoader(
         wechat_testset,
-        batch_size=args.batch_size_val,
+        batch_size=args.batch_size_val // args.n_gpu,
         num_workers=args.num_thread_reader,
         shuffle=False,
         drop_last=False,

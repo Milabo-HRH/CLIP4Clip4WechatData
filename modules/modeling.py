@@ -371,11 +371,13 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
     
     def get_visual_output(self, video, video_mask, shaped=True, video_frame=-1):
         if shaped is False:
-            video_mask = video_mask.view(-1, video_mask.shape[-1])
-            video = torch.as_tensor(video).float()
-            b, pair, bs, ts, channel, h, w = video.shape
-            video = video.view(b * pair * bs * ts, channel, h, w)
-            video_frame = bs * ts
+            # video_mask = video_mask.view(-1, video_mask.shape[-1])
+            # video = torch.as_tensor(video).float()
+            # b, pair, bs, ts, channel, h, w = video.shape
+            # video = video.view(b * pair * bs * ts, channel, h, w)
+            # video_frame = bs * ts
+            b, video_frame, w = video.shape
+            video = video.view(b, video_frame, w)
 
         bs_pair = video_mask.size(0)
         visual_hidden = self.encode_image(video, video_frame=video_frame).float()
@@ -383,17 +385,15 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
 
         return visual_hidden
 
-    def get_sequence_visual_output(self, input_ids, token_type_ids, attention_mask, video, video_mask, shaped=True, video_frame=-1):
+    def get_sequence_visual_output(self, input_ids, token_type_ids, attention_mask, video, video_mask, shaped=False, video_frame=-1):
         if shaped is False:
             input_ids = input_ids.view(-1, input_ids.shape[-1])
             token_type_ids = token_type_ids.view(-1, token_type_ids.shape[-1])
             attention_mask = attention_mask.view(-1, attention_mask.shape[-1])
             video_mask = video_mask.view(-1, video_mask.shape[-1])
 
-            video = torch.as_tensor(video).float()
-            b, pair, bs, ts, channel, h, w = video.shape
-            video = video.view(b * pair * bs * ts, channel, h, w)
-            video_frame = bs * ts
+            b, video_frame, w = video.shape
+            video = video.view(b, video_frame, w)
 
         sequence_output = self.get_sequence_output(input_ids, token_type_ids, attention_mask, shaped=True)
         visual_output = self.get_visual_output(video, video_mask, shaped=True, video_frame=video_frame)
