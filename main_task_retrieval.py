@@ -104,6 +104,7 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
                         help="choice a similarity header.")
 
     parser.add_argument("--pretrained_clip_name", default="clip_cn_vit-b-16.pt", type=str, help="Choose a CLIP version")
+    parser.add_argument("--res", default=None, type=str, help="Enter a resume model path")
 
     args = parser.parse_args()
 
@@ -176,7 +177,20 @@ def init_model(args, device, n_gpu, local_rank):
     # Prepare model
     cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed')
     model = CLIP4Clip.from_pretrained(args.cross_model, cache_dir=cache_dir, state_dict=model_state_dict, task_config=args)
+    if args.res:
+        # model = load_model(-1, args, n_gpu, device, model_file=args.res)
+        # if model_file is None or len(model_file) == 0:
+        #     model_file = os.path.join(args.output_dir, "pytorch_model.bin.{}".format(epoch))
+        # if os.path.exists(model_file):
+        model_state_dict = torch.load(args.res, map_location='cpu')
+        if args.local_rank == 0:
+                logger.info("Model loaded from %s", model_file)
+        # Prepare model
+        cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed')
+        model = model.load_state_dict(model_state_dict)
 
+        # model.to(device)
+        # return model
     model.to(device)
 
     return model
