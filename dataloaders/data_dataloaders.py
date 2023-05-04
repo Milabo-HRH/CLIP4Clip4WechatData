@@ -294,7 +294,7 @@ def dataloader_Wechat_test(args, tokenizer, subset="test"):
         batch_size=args.batch_size_val,
         num_workers=args.num_thread_reader,
         shuffle=False,
-        drop_last=False,
+        drop_last=True,
     )
     return dataloader_wechat, len(wechat_testset)
 
