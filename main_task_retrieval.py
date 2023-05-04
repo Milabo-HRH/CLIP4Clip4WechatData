@@ -184,7 +184,7 @@ def init_model(args, device, n_gpu, local_rank):
         # if os.path.exists(model_file):
         model_state_dict = torch.load(args.res, map_location='cpu')
         if args.local_rank == 0:
-                logger.info("Model loaded from %s", model_file)
+                logger.info("Model loaded from %s", args.res)
         # Prepare model
         cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed')
         model = model.load_state_dict(model_state_dict)
