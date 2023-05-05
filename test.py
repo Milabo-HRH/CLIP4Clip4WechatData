@@ -1,7 +1,7 @@
 import torch
 import torchvision
 from modules.until_module import align_state_dicts
-state_dict = torch.load('./ckpts/ckpt_wechat_retrieval_looseType/pytorch_model.bin.0', map_location="cpu")['state_dict']
+state_dict = torch.load('./ckpts/ckpt_wechat_retrieval_looseType/pytorch_model.bin.0', map_location="cpu")
 for k in list(state_dict.keys()):
     print(k)
 # align_state_dicts(state_dict)
