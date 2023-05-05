@@ -173,14 +173,30 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
         self.loss_img = loss_img.cuda(task_config.__dict__["local_device_rank"])
         self.loss_txt = loss_txt.cuda(task_config.__dict__["local_device_rank"])
         self.ln_1 = LayerNorm((task_config.__dict__["max_frames"],768))
-        self.mlp = nn.Sequential(OrderedDict([
+        self.mlp1 = nn.Sequential(OrderedDict([
+            ("c_fc", nn.Linear(768, 768 * 4)),
+            ("gelu", QuickGELU()),
+            ("c_proj", nn.Linear(768 * 4, 768))
+        ]))
+        
+        self.ln_2 = LayerNorm((task_config.__dict__["max_frames"],768))
+        self.mlp2 = nn.Sequential(OrderedDict([
+            ("c_fc", nn.Linear(768, 768 * 4)),
+            ("gelu", QuickGELU()),
+            ("c_proj", nn.Linear(768 * 4, 768))
+        ]))
+        self.ln_3 = LayerNorm((task_config.__dict__["max_frames"],768))
+        self.mlp3 = nn.Sequential(OrderedDict([
+            ("c_fc", nn.Linear(768, 768 * 4)),
+            ("gelu", QuickGELU()),
+            ("c_proj", nn.Linear(768 * 4, 768))
+        ]))
+        self.ln_4 = LayerNorm((task_config.__dict__["max_frames"],768))
+        self.mlp4 = nn.Sequential(OrderedDict([
             ("c_fc", nn.Linear(768, 768 * 4)),
             ("gelu", QuickGELU()),
             ("c_proj", nn.Linear(768 * 4, 512))
-            # ("c_fc", nn.Linear(768, 512)),
         ]))
-        self.ln_2 = LayerNorm((task_config.__dict__["max_frames"],512))
-        
         with open("./cn_clip/clip/model_configs/ViT-B-16.json", 'r') as fv, open("./cn_clip/clip/model_configs/RoBERTa-wwm-ext-base-chinese.json", 'r') as ft:
             model_info = json.load(fv)
             if isinstance(model_info['vision_layers'], str):
@@ -338,23 +354,28 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
             print("image_features is nan")
             exit(1)
         # print(torch.min(image_features))
-        image_features = self.ln_1(image_features)
+        image_features_1 = self.ln_1(image_features)
         
-        if torch.isnan(image_features).any():
+        if torch.isnan(image_features_1).any():
             print("ln1 is nan")
-            print(image_features)
+            print(image_features_1)
             exit(1)
-        image_features = self.mlp(image_features)
-        if torch.isnan(image_features).any():
+        image_features_1 = self.mlp1(image_features_1) + image_features
+        if torch.isnan(image_features_1).any():
             print("mlp is nan")
             exit(1)
-        image_features = self.ln_2(image_features)
-        if torch.isnan(image_features).any():
+        image_features_2 = self.ln_2(image_features_1)
+        if torch.isnan(image_features_2).any():
             print("ln2 is nan")
             exit(1)
         # print(image_features.shape)
+        image_features_2 = self.mlp2(image_features_2) + image_features_1
+        image_features_3 = self.ln_3(image_features_2)
+        image_features_3 = self.mlp3(image_features_3) + image_features_2
+        image_features_4 = self.ln_4(image_features_3)
+        image_features = self.mlp4(image_features_4)
         if torch.isnan(image_features).any():
-            print("image_features is nan")
+            print("Final is nan")
             exit(1)
         # if return_hidden:
         #     return image_features, None
