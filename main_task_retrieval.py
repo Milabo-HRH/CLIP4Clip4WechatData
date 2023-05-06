@@ -19,6 +19,8 @@ from cn_clip.clip import _tokenizer as tokenizer
 from util import parallel_apply, get_logger
 from dataloaders.data_dataloaders import DATALOADER_DICT
 
+os.environ['MASTER_ADDR'] = 'localhost'
+os.environ['MASTER_PORT'] = '12375'
 torch.distributed.init_process_group(backend="nccl")
 
 global logger
@@ -133,8 +135,6 @@ def set_seed_logger(args):
     torch.cuda.manual_seed_all(args.seed)  # if you are using multi-GPU.
     torch.backends.cudnn.benchmark = False
     torch.backends.cudnn.deterministic = True
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = '12375'
     world_size = torch.distributed.get_world_size()
     torch.cuda.set_device(args.local_rank)
     args.world_size = world_size
