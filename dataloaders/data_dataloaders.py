@@ -266,7 +266,7 @@ def dataloader_Wechat_train(args, tokenizer):
     dataloader = DataLoader(
         wechat_dataset,
         batch_size=args.batch_size // args.n_gpu,
-        num_workers=0,
+        num_workers=args.num_thread_reader,
         pin_memory=False,
         shuffle=(train_sampler is None),
         sampler=train_sampler,
