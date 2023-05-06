@@ -587,7 +587,7 @@ def main():
                                                scheduler, global_step, local_rank=args.local_rank)
                 except:
                     logger.info("Out of memory, retrying...")
-                    os.sleep(100)
+                    time.sleep(100)
                 else:
                     NoMem = False
             if args.local_rank == 0:
