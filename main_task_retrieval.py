@@ -579,9 +579,17 @@ def main():
                         # print(name)
                         param.requires_grad = False
                 # exit(1)
-            train_sampler.set_epoch(epoch)
-            tr_loss, global_step = train_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
+            NoMem = True
+            while(NoMem):
+            try:
+                train_sampler.set_epoch(epoch)
+                tr_loss, global_step = train_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
                                                scheduler, global_step, local_rank=args.local_rank)
+            except:
+                logger.info("Out of memory, retrying...")
+                sleep(100)
+            else:
+                NoMem = False
             if args.local_rank == 0:
                 logger.info("Epoch %d/%s Finished, Train Loss: %f", epoch + 1, args.epochs, tr_loss)
                 if(epoch%args.save_epoch==0):
