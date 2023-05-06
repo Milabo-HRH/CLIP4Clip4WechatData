@@ -107,7 +107,7 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
 
     parser.add_argument("--pretrained_clip_name", default="clip_cn_vit-b-16.pt", type=str, help="Choose a CLIP version")
     parser.add_argument("--res", default=None, type=str, help="Enter a resume model path")
-
+    parser.add_argument("--save_epoch", default=1, type=int, help="Save model every epoch")
     args = parser.parse_args()
 
     if args.sim_header == "tightTransf":
@@ -586,6 +586,7 @@ def main():
                     tr_loss, global_step = train_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
                                                scheduler, global_step, local_rank=args.local_rank)
                 except:
+                    torch.cuda.empty_cache()
                     logger.info("Out of memory, retrying...")
                     time.sleep(100)
                 else:
