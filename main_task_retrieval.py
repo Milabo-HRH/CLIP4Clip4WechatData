@@ -179,10 +179,6 @@ def init_model(args, device, n_gpu, local_rank):
     cache_dir = args.cache_dir if args.cache_dir else os.path.join(str(PYTORCH_PRETRAINED_BERT_CACHE), 'distributed')
     model = CLIP4Clip.from_pretrained(args.cross_model, cache_dir=cache_dir, state_dict=model_state_dict, task_config=args)
     if args.res:
-        # model = load_model(-1, args, n_gpu, device, model_file=args.res)
-        # if model_file is None or len(model_file) == 0:
-        #     model_file = os.path.join(args.output_dir, "pytorch_model.bin.{}".format(epoch))
-        # if os.path.exists(model_file):
         model_state_dict = torch.load(args.res, map_location='cpu')
         if args.local_rank == 0:
                 logger.info("Model loaded from %s", args.res)
@@ -213,7 +209,7 @@ def prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, loc
     no_decay_clip_param_tp = [(n, p) for n, p in no_decay_param_tp if "clip." in n]
     no_decay_noclip_param_tp = [(n, p) for n, p in no_decay_param_tp if "clip." not in n]
 
-    weight_decay = 0.2
+    weight_decay = 0.001
     optimizer_grouped_parameters = [
         {'params': [p for n, p in decay_clip_param_tp], 'weight_decay': weight_decay, 'lr': args.lr * coef_lr},
         {'params': [p for n, p in decay_noclip_param_tp], 'weight_decay': weight_decay},
@@ -571,7 +567,7 @@ def main():
         
         global_step = 0
         for epoch in range(resumed_epoch, args.epochs):
-            if args.init_model is None and epoch==0:
+            if args.res is None and epoch==0:
             #     # Freeze all parameters in the CLIP model
             #     for param in model.parameters():
             #         # print(param)
@@ -588,8 +584,8 @@ def main():
                                                scheduler, global_step, local_rank=args.local_rank)
             if args.local_rank == 0:
                 logger.info("Epoch %d/%s Finished, Train Loss: %f", epoch + 1, args.epochs, tr_loss)
-
-                output_model_file = save_model(epoch, args, model, optimizer, tr_loss, type_name="")
+                if(epoch%args.save_epoch==0):
+                    output_model_file = save_model(epoch, args, model, optimizer, tr_loss, type_name="large scale")
 
                 ## Run on val dataset, this process is *TIME-consuming*.
                 # logger.info("Eval on val dataset")
@@ -600,7 +596,7 @@ def main():
                 #     best_score = R1
                 #     best_output_model_file = output_model_file
                 # logger.info("The best model is: {}, the R1 is: {:.4f}".format(best_output_model_file, best_score))
-            if args.init_model is None and epoch==0:
+            if args.res is None and epoch==0:
                 # Unfreeze all parameters in the CLIP model
                 if hasattr(model, "clip") and args.freeze_layer_num > -1:
                     for name, param in model.clip.named_parameters():
