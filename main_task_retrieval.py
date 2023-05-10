@@ -193,7 +193,8 @@ def init_model(args, device, n_gpu, local_rank):
 
         # model.to(device)
         # return model
-    model.to(device)
+    if args.do_train:
+        model.to(device)    
 
     return model
 
