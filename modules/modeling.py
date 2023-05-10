@@ -15,6 +15,7 @@ from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
 from cn_clip.clip.model import CLIP as cn_CLIP, convert_weights as cn_convert_weights, resize_pos_embed, convert_state_dict as cn_convert_staet_dicts
 from cn_clip.training.train import get_clip_loss
 from cn_clip.clip.model import LayerNorm, QuickGELU
+from mudules.module_loss import PolyLoss
 logger = logging.getLogger(__name__)
 allgather = AllGather.apply
 
@@ -334,7 +335,19 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
             loss = get_clip_loss(self.clip, visual_output, sequence_output, logit_scale, self.loss_img, self.loss_txt, args=self.task_config)
             return loss
         else:
-            return None
+            visual_output = allgather(visual_output, self.task_config)
+            video_mask = allgather(video_mask, self.task_config)
+            sequence_output = allgather(sequence_output, self.task_config)
+            torch.distributed.barrier()
+
+            visual_output = visual_output / visual_output.norm(dim=-1, keepdim=True)
+            visual_output = self._mean_pooling_for_similarity_visual(visual_output, video_mask)
+            visual_output = visual_output / visual_output.norm(dim=-1, keepdim=True)
+
+            sequence_output = sequence_output.squeeze(1)
+            sequence_output = sequence_output / sequence_output.norm(dim=-1, keepdim=True)
+
+            return torch.cat([sequence_output, visual_output], dim=-1)
 
     def get_sequence_output(self, input_ids, token_type_ids, attention_mask, shaped=False):
         if shaped is False:
@@ -561,3 +574,28 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
             retrieve_logits = self._cross_similarity(sequence_output, visual_output, attention_mask, video_mask, )
 
         return retrieve_logits, contrastive_direction
+
+class ConcatNet (nn.Module):
+    def _init__(self, netl, net2):
+        super(ConcatNet, self) ._init__()
+        self.net1 = net1
+        self.net2 = net2
+        self.loss_func = PolyLoss(softmax=True, epsilon=args.epsilon, reduction='none')
+    def forward(self, input_ids, token_type_ids, attention_mask, video, video_mask=None, groud_truth=None):
+        out = self.net1 (input_ids, token_type_ids, attention_mask, video, video_mask).detach()
+        global_out, local_out, sym_out = self.net2(out)
+        if not groud_truth:   
+            return sym_out
+        else:
+            # todo: add loss
+            
+            return cal_focal_loss(sym_out, groud_truth['label'], self.loss_func)
+    @staticmethod
+    def cal_focal_loss(prediction, label, loss_func):
+        label = label.squeeze(dim=1)
+        loss = loss_func(prediction, label)
+        with torch.no_grad():
+            pred_label_id = torch.argmax(prediction, dim=1)
+            accuracy = (label == pred_label_id).float()#.sum() / label.shape[0]
+        return loss, accuracy, pred_label_id, label
+        

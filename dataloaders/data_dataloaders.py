@@ -6,7 +6,7 @@ from dataloaders.dataloader_msvd_retrieval import MSVD_DataLoader
 from dataloaders.dataloader_lsmdc_retrieval import LSMDC_DataLoader
 from dataloaders.dataloader_activitynet_retrieval import ActivityNet_DataLoader
 from dataloaders.dataloader_didemo_retrieval import DiDeMo_DataLoader
-from dataloaders.dataloader_wechat_retrieval import Wechat_DataLoader
+from dataloaders.dataloader_wechat_retrieval import Wechat_DataLoader, Wechat_DataLoader_finetune
 
 def dataloader_msrvtt_train(args, tokenizer):
     msrvtt_dataset = MSRVTT_TrainDataLoader(
@@ -275,6 +275,34 @@ def dataloader_Wechat_train(args, tokenizer):
 
     return dataloader, len(wechat_dataset), train_sampler
 
+def dataloader_Wechat_finetune(args, tokenizer, subset='val'):
+    wechat_dataset = Wechat_DataLoader_finetune(
+        subset="val",
+        json_path=args.data_path,
+        features_path=args.features_path,
+        max_words=args.max_words,
+        feature_framerate=args.feature_framerate,
+        tokenizer=tokenizer,
+        max_frames=args.max_frames,
+        frame_order=args.train_frame_order,
+        slice_framepos=args.slice_framepos,
+        ocr = False,
+        num_thread_reader = args.num_thread_reader,
+    )
+
+    train_sampler = torch.utils.data.distributed.DistributedSampler(wechat_dataset)
+    dataloader = DataLoader(
+        wechat_dataset,
+        batch_size=args.batch_size // args.n_gpu,
+        num_workers=4,
+        pin_memory=True,
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
+        drop_last=True,
+    )
+
+    return dataloader, len(wechat_dataset), train_sampler
+
 def dataloader_Wechat_test(args, tokenizer, subset="test"):
     wechat_testset = Wechat_DataLoader(
         subset=subset,
@@ -304,4 +332,4 @@ DATALOADER_DICT["msvd"] = {"train":dataloader_msvd_train, "val":dataloader_msvd_
 DATALOADER_DICT["lsmdc"] = {"train":dataloader_lsmdc_train, "val":dataloader_lsmdc_test, "test":dataloader_lsmdc_test}
 DATALOADER_DICT["activity"] = {"train":dataloader_activity_train, "val":dataloader_activity_test, "test":None}
 DATALOADER_DICT["didemo"] = {"train":dataloader_didemo_train, "val":dataloader_didemo_test, "test":dataloader_didemo_test}
-DATALOADER_DICT["wechat"] = {"train":dataloader_Wechat_train, "val":dataloader_Wechat_test, "test":None}
+DATALOADER_DICT["wechat"] = {"train":dataloader_Wechat_train, "val":dataloader_Wechat_finetune, "test":None}

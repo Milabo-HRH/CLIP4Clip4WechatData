@@ -12,7 +12,8 @@ import time
 import argparse
 from modules.tokenization_clip import SimpleTokenizer as ClipTokenizer
 from modules.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
-from modules.modeling import CLIP4Clip
+from modules.modeling import CLIP4Clip, ConcatNet
+from modules.module_hmcn import hmcn
 from modules.optimization import BertAdam
 from cn_clip.clip import _tokenizer as tokenizer
 
@@ -108,6 +109,10 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
     parser.add_argument("--pretrained_clip_name", default="clip_cn_vit-b-16.pt", type=str, help="Choose a CLIP version")
     parser.add_argument("--res", default=None, type=str, help="Enter a resume model path")
     parser.add_argument("--save_epoch", default=1, type=int, help="Save model every epoch")
+    parser.add_argument('--modal_dropout', type=float, default=0.2, help='Modal Dropout Prob.')
+    parser.add_argument('--epsilon', type=float, default=0.8, help='The epsilon of Poly Loss.')
+    parser.add_argument('--do_finetune', action= 'store_true', help="Whether to run finetuning.")
+    
     args = parser.parse_args()
 
     if args.sim_header == "tightTransf":
@@ -117,8 +122,8 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
     if args.gradient_accumulation_steps < 1:
         raise ValueError("Invalid gradient_accumulation_steps parameter: {}, should be >= 1".format(
             args.gradient_accumulation_steps))
-    if not args.do_train and not args.do_eval:
-        raise ValueError("At least one of `do_train` or `do_eval` must be True.")
+    # if not args.do_train and not args.do_eval:
+    #     raise ValueError("At least one of `do_train` or `do_eval` must be True.")
 
     args.batch_size = int(args.batch_size / args.gradient_accumulation_steps)
 
@@ -222,11 +227,15 @@ def prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, loc
                          schedule='warmup_cosine', b1=0.9, b2=0.98, e=1e-6,
                          t_total=num_train_optimization_steps, weight_decay=weight_decay,
                          max_grad_norm=1.0)
-
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank],
+    if args.do_train:
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank],
                                                       output_device=local_rank, find_unused_parameters=True)
-
-    return optimizer, scheduler, model
+    else:
+        model_h = hmcn(args)
+        model_c = ConcatNet(model, model_h, args)
+        model_c = torch.nn.parallel.DistributedDataParallel(model_c, device_ids=[local_rank],
+                                                      output_device=local_rank, find_unused_parameters=True)
+    return optimizer, scheduler, model_c
 
 def save_model(epoch, args, model, optimizer, tr_loss, type_name=""):
     # Only save the model it-self
@@ -312,6 +321,60 @@ def train_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer, 
 
     total_loss = total_loss / len(train_dataloader)
     return total_loss, global_step
+
+def finetune_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer, scheduler, global_step, local_rank=0):
+    global logger
+    torch.cuda.empty_cache()
+    model.train()
+    log_step = args.n_display
+    start_time = time.time()
+    total_loss = 0
+    total_accuracy = 0
+    for step, batch in enumerate(train_dataloader):
+        if n_gpu == 1:
+            # multi-gpu does scattering it-self
+            batch = tuple(t.to(device=device, non_blocking=True) for t in batch)
+
+        input_ids, input_mask, segment_ids, video, video_mask, groud_truth = batch
+        loss, accuracy, pred_label_id, label = model(input_ids, segment_ids, input_mask, video, video_mask, groud_truth)
+
+        if n_gpu > 1:
+            loss = loss.mean()  # mean() to average on multi-gpu.
+        if args.gradient_accumulation_steps > 1:
+            loss = loss / args.gradient_accumulation_steps
+
+        loss.backward()
+
+        total_loss += float(loss)
+        total_accuracy += float(accuracy)
+        if (step + 1) % args.gradient_accumulation_steps == 0:
+
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+            if scheduler is not None:
+                scheduler.step()  # Update learning rate schedule
+
+            optimizer.step()
+            optimizer.zero_grad()
+
+            # # https://github.com/openai/CLIP/issues/46
+            # if hasattr(model, 'module'):
+            #     torch.clamp_(model.module.clip.logit_scale.data, max=np.log(100))
+            # else:
+            #     torch.clamp_(model.clip.logit_scale.data, max=np.log(100))
+
+            global_step += 1
+            if global_step % log_step == 0 and local_rank == 0:
+                logger.info("Epoch: %d/%s, Step: %d/%d, Lr: %s, Loss: %f, Time/step: %f", epoch + 1,
+                            args.epochs, step + 1,
+                            len(train_dataloader), "-".join([str('%.9f'%itm) for itm in sorted(list(set(optimizer.get_lr())))]),
+                            float(loss),
+                            (time.time() - start_time) / (log_step * args.gradient_accumulation_steps))
+                start_time = time.time()
+
+    total_loss = total_loss / len(train_dataloader)
+    total_accuracy = total_accuracy / len(train_dataloader)
+    return total_loss, total_accuracy, global_step
 
 def _run_on_single_gpu(model, batch_list_t, batch_list_v, batch_sequence_output_list, batch_visual_output_list):
     sim_matrix = []
@@ -630,7 +693,50 @@ def main():
         # if args.local_rank == 0:
         #     model = load_model(-1, args, n_gpu, device, model_file=best_output_model_file)
         #     eval_epoch(args, model, test_dataloader, device, n_gpu)
+    elif args.do_finetune:
+        train_dataloader, train_length, train_sampler = DATALOADER_DICT[args.datatype]["train"](args, tokenizer)
+        num_train_optimization_steps = (int(len(train_dataloader) + args.gradient_accumulation_steps - 1)
+                                        / args.gradient_accumulation_steps) * args.epochs
 
+        coef_lr = args.coef_lr
+        optimizer, scheduler, model = prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, args.local_rank, coef_lr=coef_lr)
+
+        if args.local_rank == 0:
+            logger.info("***** Running training *****")
+            logger.info("  Num examples = %d", train_length)
+            logger.info("  Batch size = %d", args.batch_size)
+            logger.info("  Num steps = %d", num_train_optimization_steps * args.gradient_accumulation_steps)
+
+        best_score = 0.00001
+        best_output_model_file = "None"
+        ## ##############################################################
+        # resume optimizer state besides loss to continue train
+        ## ##############################################################
+        resumed_epoch = 0
+        if args.resume_model:
+            checkpoint = torch.load(args.resume_model, map_location='cpu')
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            resumed_epoch = checkpoint['epoch']+1
+            resumed_loss = checkpoint['loss']
+        
+        global_step = 0
+        for epoch in range(resumed_epoch, args.epochs):
+            NoMem = True
+            while(NoMem):
+                try:
+                    train_sampler.set_epoch(epoch)
+                    tr_loss, tr_accu, global_step = train_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
+                                               scheduler, global_step, local_rank=args.local_rank)
+                except:
+                    torch.cuda.empty_cache()
+                    logger.info("Out of memory, retrying...")
+                    time.sleep(100)
+                else:
+                    NoMem = False
+            if args.local_rank == 0:
+                logger.info("Epoch %d/%s Finished, Train Loss: %f, Train Accuracy: %f", epoch + 1, args.epochs, tr_loss, tr_accu)
+                if((epoch+1)%args.save_epoch==0):
+                    output_model_file = save_model(epoch, args, model.net2, optimizer, tr_loss, type_name="finetuning")
     elif args.do_eval:
         if args.local_rank == 0:
             eval_epoch(args, model, test_dataloader, device, n_gpu)
