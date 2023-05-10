@@ -1,6 +1,7 @@
 import torch
 class hmcn(torch.nn.Module):
     def __init__(self, config):
+        super(hmcn, self).__init__()
         hidden_dimension = 1024
         self.hierarchical_class = [24, 200]
         self.global2local = [0, 1024, 1024]
