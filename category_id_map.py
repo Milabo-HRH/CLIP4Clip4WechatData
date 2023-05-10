@@ -49,3 +49,17 @@ def lv2id_to_lv1id(lv2id: int) -> int:
     """ Convert level-2 class id to level-1 class id. """
     category_id = lv2id_to_category_id(lv2id)
     return category_id_to_lv1id(category_id)
+
+CATEGORY_ID_TO_FIRID, CATEGORY_ID_TO_SECID, CATEGORY_HIE_REL, CATEGORY_SECID_TO_ID = {}, {}, {}, {}
+for category in CATEGORY_ID_LIST:
+    if category[:2] not in CATEGORY_ID_TO_FIRID:
+        CATEGORY_ID_TO_FIRID[category[:2]] = len(CATEGORY_ID_TO_FIRID)
+
+for category in CATEGORY_ID_LIST:
+    if category not in CATEGORY_ID_TO_SECID:
+        CATEGORY_ID_TO_SECID[category] = len(CATEGORY_ID_TO_SECID)
+        CATEGORY_SECID_TO_ID[len(CATEGORY_ID_TO_SECID) - 1] = category
+    if CATEGORY_ID_TO_FIRID[category[:2]] not in CATEGORY_HIE_REL:
+        CATEGORY_HIE_REL[CATEGORY_ID_TO_FIRID[category[:2]]] = [CATEGORY_ID_TO_SECID[category]]
+    else:
+        CATEGORY_HIE_REL[CATEGORY_ID_TO_FIRID[category[:2]]].append(CATEGORY_ID_TO_SECID[category])
