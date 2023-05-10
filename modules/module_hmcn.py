@@ -34,7 +34,7 @@ class hmcn(torch.nn.Module):
             torch.nn.init.normal_(m.weight, std=0.1) 
     def forward(self, batch):
         local_layer_outputs = []
-        batch_size = batch.shape[0]
+        batch_size = batch.shape[1]
         global_layer_activation = batch
         for i, (local_layer, global_layer) in enumerate(zip(self.local_layers, self.global_layers)):
             local_layer_activation = global_layer(global_layer_activation)
