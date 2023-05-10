@@ -26,7 +26,7 @@ class hmcn(torch.nn.Module):
 
         self.global_layers.apply(self._init_weight)
         self.local_layers.apply(self._init_weight)
-        self.linear = torch.nn.Linear(self.hierarchical_depth[-1], len(200))
+        self.linear = torch.nn.Linear(self.hierarchical_depth[-1], 200)
         self.linear.apply(self._init_weight)
         self.dropout = torch.nn.Dropout(p=config.modal_dropout)
     def _init_weight(self, m):
