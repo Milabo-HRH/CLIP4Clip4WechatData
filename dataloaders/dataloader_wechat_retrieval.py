@@ -269,8 +269,8 @@ class Wechat_Dataloader_finetune(Dataset):
         
 
     def __getitem__(self, idx):
-        pairs_text, pairs_mask, pairs_segment, choice_video_ids = self._get_text(idx)
-        video, video_mask = self._get_rawvideo(choice_video_ids)
+        pairs_text, pairs_mask, pairs_segment = self._get_text(idx)
+        video, video_mask = self._get_rawvideo(idx)
         labels = {}
         label = category_id_to_lv2id(self.anns[idx]['category_id'])
         labels['label'] = torch.LongTensor([label])
