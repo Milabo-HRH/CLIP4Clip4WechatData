@@ -589,7 +589,7 @@ class ConcatNet (nn.Module):
         else:
             # todo: add loss
             
-            return cal_focal_loss(sym_out, groud_truth['label'], self.loss_func)
+            return self.cal_focal_loss(sym_out, groud_truth['label'], self.loss_func)
     @staticmethod
     def cal_focal_loss(prediction, label, loss_func):
         label = label.squeeze(dim=1)
