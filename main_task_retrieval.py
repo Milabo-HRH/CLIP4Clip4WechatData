@@ -728,7 +728,7 @@ def main():
             # while(NoMem):
             #     try:
             train_sampler.set_epoch(epoch)
-            tr_loss, tr_accu, global_step = train_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
+            tr_loss, tr_accu, global_step = finetune_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
                                        scheduler, global_step, local_rank=args.local_rank)
             #     except:
             #         torch.cuda.empty_cache()
