@@ -14,7 +14,7 @@ class hmcn(torch.nn.Module):
                     torch.nn.Linear(hidden_dimension + self.hierarchical_depth[i-1], self.hierarchical_depth[i]),
                     torch.nn.ReLU(),
                     torch.nn.BatchNorm1d(self.hierarchical_depth[i]),
-                    torch.nn.Dropout(p=0.5)
+                    torch.nn.Dropout(p=config.modal_dropout)
                 ))
             self.local_layers.append(
                 torch.nn.Sequential(
@@ -34,7 +34,7 @@ class hmcn(torch.nn.Module):
             torch.nn.init.normal_(m.weight, std=0.1) 
     def forward(self, batch):
         local_layer_outputs = []
-        batch_size = batch.size()[0]
+        batch_size = len(batch)
         global_layer_activation = batch
         for i, (local_layer, global_layer) in enumerate(zip(self.local_layers, self.global_layers)):
             local_layer_activation = global_layer(global_layer_activation)
