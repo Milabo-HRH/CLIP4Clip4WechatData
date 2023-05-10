@@ -6,7 +6,7 @@ from dataloaders.dataloader_msvd_retrieval import MSVD_DataLoader
 from dataloaders.dataloader_lsmdc_retrieval import LSMDC_DataLoader
 from dataloaders.dataloader_activitynet_retrieval import ActivityNet_DataLoader
 from dataloaders.dataloader_didemo_retrieval import DiDeMo_DataLoader
-from dataloaders.dataloader_wechat_retrieval import Wechat_DataLoader, Wechat_DataLoader_finetune
+from dataloaders.dataloader_wechat_retrieval import Wechat_DataLoader, Wechat_Dataloader_finetune
 
 def dataloader_msrvtt_train(args, tokenizer):
     msrvtt_dataset = MSRVTT_TrainDataLoader(
