@@ -13,7 +13,7 @@ from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 from torch import nn
-from modules.until_module import align_state_dicts
+# from modules.until_module import align_state_dicts
 _MODELS = {
     "RN50": "https://openaipublic.azureedge.net/clip/models/afeb0e10f9e5a86da6080e35cf09123aca3b358a0c3e3b6c78a7b63bc04b6762/RN50.pt",
     "RN101": "https://openaipublic.azureedge.net/clip/models/8fa8567bab74a42d41c5915025a8e4538c3bdbe8804a470a72f30b0d94fab599/RN101.pt",
@@ -451,7 +451,7 @@ class CLIP(nn.Module):
             if k.startswith("module."):
                 state_dict[k[len("module."):]] = state_dict[k]
                 del state_dict[k]
-        align_state_dicts(state_dict)
+        # align_state_dicts(state_dict)
         return state_dict
 
     def build_attention_mask(self, context_length):
