@@ -276,7 +276,7 @@ def dataloader_Wechat_train(args, tokenizer):
     return dataloader, len(wechat_dataset), train_sampler
 
 def dataloader_Wechat_finetune(args, tokenizer, subset='val'):
-    wechat_dataset = Wechat_DataLoader_finetune(
+    wechat_dataset = Wechat_Dataloader_finetune(
         subset="val",
         json_path=args.data_path,
         features_path=args.features_path,
