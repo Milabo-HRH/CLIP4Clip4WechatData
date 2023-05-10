@@ -15,7 +15,7 @@ from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence
 from cn_clip.clip.model import CLIP as cn_CLIP, convert_weights as cn_convert_weights, resize_pos_embed, convert_state_dict as cn_convert_staet_dicts
 from cn_clip.training.train import get_clip_loss
 from cn_clip.clip.model import LayerNorm, QuickGELU
-from mudules.module_loss import PolyLoss
+from modules.module_loss import PolyLoss
 logger = logging.getLogger(__name__)
 allgather = AllGather.apply
 
