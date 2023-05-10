@@ -576,7 +576,7 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
         return retrieve_logits, contrastive_direction
 
 class ConcatNet (nn.Module):
-    def __init__(self, net1, net2):
+    def __init__(self, net1, net2, args):
         super(ConcatNet, self) .__init__()
         self.net1 = net1
         self.net2 = net2

@@ -232,7 +232,7 @@ def prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, loc
                                                       output_device=local_rank, find_unused_parameters=True)
     else:
         model_h = hmcn(args)
-        model_c = ConcatNet(model, model_h)
+        model_c = ConcatNet(model, model_h, args)
         model_c = torch.nn.parallel.DistributedDataParallel(model_c, device_ids=[local_rank],
                                                       output_device=local_rank, find_unused_parameters=True)
     return optimizer, scheduler, model_c
