@@ -724,18 +724,18 @@ def main():
         
         global_step = 0
         for epoch in range(resumed_epoch, args.epochs):
-            NoMem = True
-            while(NoMem):
-                try:
-                    train_sampler.set_epoch(epoch)
-                    tr_loss, tr_accu, global_step = train_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
-                                               scheduler, global_step, local_rank=args.local_rank)
-                except:
-                    torch.cuda.empty_cache()
-                    logger.info("Out of memory, retrying...")
-                    time.sleep(100)
-                else:
-                    NoMem = False
+            # NoMem = True
+            # while(NoMem):
+            #     try:
+            train_sampler.set_epoch(epoch)
+            tr_loss, tr_accu, global_step = train_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
+                                       scheduler, global_step, local_rank=args.local_rank)
+            #     except:
+            #         torch.cuda.empty_cache()
+            #         logger.info("Out of memory, retrying...")
+            #         time.sleep(100)
+            #     else:
+            #         NoMem = False
             if args.local_rank == 0:
                 logger.info("Epoch %d/%s Finished, Train Loss: %f, Train Accuracy: %f", epoch + 1, args.epochs, tr_loss, tr_accu)
                 if((epoch+1)%args.save_epoch==0):
