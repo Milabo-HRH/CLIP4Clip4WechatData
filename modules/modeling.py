@@ -577,7 +577,7 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
 
 class ConcatNet (nn.Module):
     def __init__(self, netl, net2):
-        super(ConcatNet, self) ._init__()
+        super(ConcatNet, self) .__init__()
         self.net1 = net1
         self.net2 = net2
         self.loss_func = PolyLoss(softmax=True, epsilon=args.epsilon, reduction='none')
