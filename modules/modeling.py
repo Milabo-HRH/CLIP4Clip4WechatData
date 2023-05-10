@@ -311,7 +311,7 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
         sequence_output, visual_output = self.get_sequence_visual_output(input_ids, token_type_ids, attention_mask,
                                                                          video, video_mask, shaped=True, video_frame=video_frame)
 
-        if self.training:
+        if self.do_train:
             # loss = 0.
             # sim_matrix, *_tmp = self.get_similarity_logits(sequence_output, visual_output, attention_mask, video_mask,
             #                                         shaped=True, loose_type=self.loose_type)
