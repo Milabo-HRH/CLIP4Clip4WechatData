@@ -584,6 +584,7 @@ class ConcatNet (nn.Module):
         self.args = args
     def forward(self, input_ids, token_type_ids, attention_mask, video, video_mask=None, groud_truth=None):
         out = self.net1 (input_ids, token_type_ids, attention_mask, video, video_mask).detach()
+        out.requires_grad = True
         global_out, local_out, sym_out = self.net2(out)
         if not groud_truth:   
             return sym_out
@@ -595,12 +596,13 @@ class ConcatNet (nn.Module):
     def cal_focal_loss(self, prediction, label, loss_func):
         label = label.squeeze(dim=1)
         loss = loss_func(prediction, label)
+        loss = allgather(loss, self.args)
+        # loss.requires_grad = True
         with torch.no_grad():
             pred_label_id = torch.argmax(prediction, dim=1)
-            accuracy = (label == pred_label_id).float().sum() / label.shape[0]
-            accuracy = AllGather(accuracy, self.args)
-            loss = AllGather(loss, self.args)
+            accuracy = (label == pred_label_id).float()#.sum() / label.shape[0]
+            accuracy = allgather(accuracy, self.args)
+            
             torch.distributed.barrier()
-            accuracy = torch.mean(accuracy)
+            accuracy = accuracy.mean()
         return loss, accuracy, pred_label_id, label
-        
