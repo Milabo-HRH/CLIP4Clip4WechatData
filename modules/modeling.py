@@ -583,8 +583,7 @@ class ConcatNet (nn.Module):
         self.loss_func = PolyLoss(softmax=True, epsilon=args.epsilon, reduction='none')
         self.args = args
     def forward(self, input_ids, token_type_ids, attention_mask, video, video_mask=None, groud_truth=None):
-        out = self.net1 (input_ids, token_type_ids, attention_mask, video, video_mask).detach()
-        out.requires_grad = True
+        out = self.net1 (input_ids, token_type_ids, attention_mask, video, video_mask)
         global_out, local_out, sym_out = self.net2(out)
         if not groud_truth:   
             return sym_out

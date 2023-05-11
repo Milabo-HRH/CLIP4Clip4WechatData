@@ -199,10 +199,15 @@ def init_model(args, device, n_gpu, local_rank):
     return model
 
 def prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, local_rank, coef_lr=1.):
-
+    if args.do_finetune:
+        model_h = hmcn(args)
+        # model_h.to(device)
+        model_c = ConcatNet(model, model_h, args)
+        model_c.to(device)
+        model = model_c
     if hasattr(model, 'module'):
         model = model.module
-
+    
     param_optimizer = list(model.named_parameters())
     no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
 
@@ -228,17 +233,11 @@ def prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, loc
                          schedule='warmup_cosine', b1=0.9, b2=0.98, e=1e-6,
                          t_total=num_train_optimization_steps, weight_decay=weight_decay,
                          max_grad_norm=1.0)
-    if args.do_train:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank],
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank],
                                                       output_device=local_rank, find_unused_parameters=True)
-    else:
-        model_h = hmcn(args)
-        # model_h.to(device)
-        model_c = ConcatNet(model, model_h, args)
-        model_c.to(device)
-        model_c = torch.nn.parallel.DistributedDataParallel(model_c, device_ids=[local_rank],
-                                                      output_device=local_rank, find_unused_parameters=True)
-    return optimizer, scheduler, model_c
+
+       
+    return optimizer, scheduler, model
 
 def save_model(epoch, args, model, optimizer, tr_loss, type_name=""):
     # Only save the model it-self
@@ -368,9 +367,9 @@ def finetune_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimize
 
             global_step += 1
             if global_step % log_step == 0 and local_rank == 0:
-                logger.info("Epoch: %d/%s, Step: %d/%d, Loss: %f, Accuracy: %f, Time/step: %f", epoch + 1,
+                logger.info("Epoch: %d/%s, Step: %d/%d, Lr: %s, Loss: %f, Accuracy: %f, Time/step: %f", epoch + 1,
                             args.epochs, step + 1,
-                            len(train_dataloader),
+                            len(train_dataloader), "-".join([str('%.9f'%itm) for itm in sorted(list(set(optimizer.get_lr())))]), 
                             float(loss), float(accuracy),
                             (time.time() - start_time) / (log_step * args.gradient_accumulation_steps))
                 start_time = time.time()
@@ -703,7 +702,10 @@ def main():
 
         coef_lr = args.coef_lr
         optimizer, scheduler, model = prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, args.local_rank, coef_lr=coef_lr)
-
+        for name, param in model.named_parameters():
+            if(name.startswith("net1")):
+            # print(name)
+                param.requires_grad = False
         if args.local_rank == 0:
             logger.info("***** Running training *****")
             logger.info("  Num examples = %d", train_length)
