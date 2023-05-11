@@ -2,15 +2,16 @@
 
 (**July 28, 2021**) Add ViT-B/16 with an extra `--pretrained_clip_name`
 
-(**Apr. 22, 2021**) First version 
+(**Apr. 22, 2021**) First version
 
-The implementation of paper [**CLIP4Clip: An Empirical Study of CLIP for End to End Video Clip Retrieval**](https://arxiv.org/abs/2104.08860). 
+The implementation of paper [**CLIP4Clip: An Empirical Study of CLIP for End to End Video Clip Retrieval**](https://arxiv.org/abs/2104.08860).
 
 CLIP4Clip is a video-text retrieval model based on [CLIP (ViT-B)](https://github.com/openai/CLIP). We investigate three similarity calculation approaches: parameter-free type, sequential type, and tight type, in this work. The model achieve SOTA results on MSR-VTT, MSVD, LSMDC, ActivityNet, and DiDeMo.
 
 ![CLIP4Clip](CLIP4Clip.png)
 
 ## Requirement
+
 ```sh
 # From CLIP
 conda install --yes -c pytorch pytorch=1.7.1 torchvision cudatoolkit=11.0
@@ -22,23 +23,26 @@ pip install opencv-python boto3 requests pandas
 
 **For MSRVTT**
 
-The official data and video links can be found in [link](http://ms-multimedia-challenge.com/2017/dataset). 
+The official data and video links can be found in [link](http://ms-multimedia-challenge.com/2017/dataset).
 
 For the convenience, you can also download the splits and captions by,
+
 ```sh
 wget https://github.com/ArrowLuo/CLIP4Clip/releases/download/v0.0/msrvtt_data.zip
 ```
 
 Besides, the raw videos can be found in [sharing](https://github.com/m-bain/frozen-in-time#-finetuning-benchmarks-msr-vtt) from *Frozen️ in Time*, i.e.,
+
 ```sh
 wget https://www.robots.ox.ac.uk/~maxbain/frozen-in-time/data/MSRVTT.zip
 ```
 
 **For MSVD**
 
-Raw videos can be download from [link](https://www.cs.utexas.edu/users/ml/clamp/videoDescription/). 
+Raw videos can be download from [link](https://www.cs.utexas.edu/users/ml/clamp/videoDescription/).
 
 The splits and `raw_captions` can be found in the wonderful job [collaborative-experts](https://github.com/albanie/collaborative-experts/blob/master/misc/datasets/msvd/README.md). For the convenience, you can also download them by,
+
 ```sh
 wget https://github.com/ArrowLuo/CLIP4Clip/releases/download/v0.0/msvd_data.zip
 ```
@@ -56,38 +60,41 @@ The official websit has made the full dataset available on Google and Baidu driv
 
 Raw videos can be download from [LisaAnne/LocalizingMoments](https://github.com/LisaAnne/LocalizingMoments). The splits can be found in the job [collaborative-experts](https://github.com/albanie/collaborative-experts/tree/master/misc/datasets/didemo/README.md).
 
-
 ## Compress Video for Speed-up (optional)
+
 ```sh
 python preprocess/compress_video.py --input_root [raw_video_path] --output_root [compressed_video_path]
 ```
+
 This script will compress the video to *3fps* with width *224* (or height *224*). Modify the variables for your customization.
 
-## How to Run 
+## How to Run
 
->`--features_path` is the video root path
-> 
->`--linear_patch` can be set with `2d` or `3d`
-> 
+> `--features_path` is the video root path
+>
+> `--linear_patch` can be set with `2d` or `3d`
+>
 > `--sim_header` can be set with `meanP`, `seqLSTM`, `seqTransf`, or `tightTransf`
-> 
+>
 > `--pretrained_clip_name` can be set with `ViT-B/32` or `ViT-B/16`
-> 
-> `--resume_model` can be used to reload the saved optimizer state to continuely train the model, **Note**: need to set the corresponding chechpoint via `--init_model` simultaneously. 
+>
+> `--resume_model` can be used to reload the saved optimizer state to continuely train the model, **Note**: need to set the corresponding chechpoint via `--init_model` simultaneously.
 
-read our paper for more details on `--linear_patch` and `--sim_header`. Test more hyperparameters for better performance. 
+read our paper for more details on `--linear_patch` and `--sim_header`. Test more hyperparameters for better performance.
 
 Download CLIP (ViT-B/32) weight,
+
 ```sh
 wget -P ./modules https://openaipublic.azureedge.net/clip/models/40d365715913c9da98579312b702a82c18be219cc2a73407c4526f58eba950af/ViT-B-32.pt
 ```
+
 or, download CLIP (ViT-B/16) weight,
+
 ```sh
 wget -P ./modules https://openaipublic.azureedge.net/clip/models/5806e77cd80f8b59890b7e101eabd078d9fb84e6937f9e85e4ecb61988df416f/ViT-B-16.pt
 ```
 
 Then, run
-
 
 *The CLIP (ViT-B/32) is the default setting in the paper, replacing with the ViT-B/16 for better performance.*
 
@@ -112,6 +119,7 @@ main_task_retrieval.py --do_train --num_thread_reader=0 \
 ```
 
 ### MSVD
+
 ```sh
 DATA_PATH=[Your MSVD data and videos path]
 python -m torch.distributed.launch --nproc_per_node=4 \
@@ -129,6 +137,7 @@ main_task_retrieval.py --do_train --num_thread_reader=2 \
 ```
 
 ### LSMDC
+
 ```sh
 DATA_PATH=[Your LSMDC data and videos path]
 python -m torch.distributed.launch --nproc_per_node=4 \
@@ -145,13 +154,16 @@ main_task_retrieval.py --do_train --num_thread_reader=2 \
 ```
 
 ### Wechat
+
 ```sh
 DATA_PATH=[Your Wechat data and videos path]
-python -m torch.distributed.launch --nproc_per_node=2 main_task_retrieval.py --do_train --num_thread_reader=2 --epochs=2 --batch_size=128 --n_display=50 --data_path ./data/annotations --features_path ./data/zip_feats/pretrain.zip --output_dir ckpts/ckpt_wechat_retrieval_looseType --lr 1e-4 --max_words 32 --max_frames 32 --batch_size_val 16 --datatype wechat --feature_framerate 1 --coef_lr 1e-3 --freeze_layer_num 0  --slice_framepos 2 --loose_type --linear_patch 2d --sim_header meanP --pretrained_clip_name ./modules/clip_cn_vit-b-16.pt
+python -m torch.distributed.launch --nproc_per_node=2 main_task_retrieval.py --do_finetune --num_thread_reader=2 --epochs=2 --batch_size=128 --n_display=50 --data_path ./data/annotations --features_path ./data/zip_feats/pretrain.zip --output_dir ckpts/ckpt_wechat_retrieval_looseType --lr 1e-4 --max_words 32 --max_frames 32 --batch_size_val 16 --datatype wechat --feature_framerate 1 --coef_lr 1e-3 --freeze_layer_num 0  --slice_framepos 2 --loose_type --linear_patch 2d --sim_header meanP --pretrained_clip_name ./modules/clip_cn_vit-b-16.pt
 ```
 
 ### ActivityNet
+
 ActivityNet is regarded as video-paragraph retrieval in our setting, thus, need more GPUs (or run with multi-node).
+
 ```sh
 DATA_PATH=[Your ActivityNet data and videos path]
 python -m torch.distributed.launch --nproc_per_node=8 \
@@ -168,7 +180,9 @@ main_task_retrieval.py --do_train --num_thread_reader=2 \
 ```
 
 ### DiDeMo
+
 DiDeMo is regarded as video-paragraph retrieval in our setting, thus, need more GPUs (or run with multi-node).
+
 ```sh
 DATA_PATH=[Your DiDeMo data and videos path]
 python -m torch.distributed.launch --nproc_per_node=8 \
@@ -185,7 +199,9 @@ main_task_retrieval.py --do_train --num_thread_reader=2 \
 ```
 
 # Citation
+
 If you find CLIP4Clip useful in your work, you can cite the following paper:
+
 ```bibtex
 @Article{Luo2021CLIP4Clip,
   author  = {Huaishao Luo and Lei Ji and Ming Zhong and Yang Chen and Wen Lei and Nan Duan and Tianrui Li},
@@ -196,4 +212,5 @@ If you find CLIP4Clip useful in your work, you can cite the following paper:
 ```
 
 # Acknowledgments
+
 Our code is based on [CLIP](https://github.com/openai/CLIP) and [UniVL](https://github.com/microsoft/UniVL).

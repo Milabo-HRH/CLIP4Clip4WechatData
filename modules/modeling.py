@@ -335,10 +335,10 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
             loss = get_clip_loss(self.clip, visual_output, sequence_output, logit_scale, self.loss_img, self.loss_txt, args=self.task_config)
             return loss
         else:
-            visual_output = allgather(visual_output, self.task_config)
-            video_mask = allgather(video_mask, self.task_config)
-            sequence_output = allgather(sequence_output, self.task_config)
-            torch.distributed.barrier()
+            # visual_output = allgather(visual_output, self.task_config)
+            # video_mask = allgather(video_mask, self.task_config)
+            # sequence_output = allgather(sequence_output, self.task_config)
+            # torch.distributed.barrier()
 
             visual_output = visual_output / visual_output.norm(dim=-1, keepdim=True)
             visual_output = self._mean_pooling_for_similarity_visual(visual_output, video_mask)
