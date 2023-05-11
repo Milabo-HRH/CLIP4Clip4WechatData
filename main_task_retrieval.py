@@ -705,7 +705,7 @@ def main():
         optimizer, scheduler, model = prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, args.local_rank, coef_lr=coef_lr)
         for name, param in model.named_parameters():
             if(name.startswith("module.net1")):
-                print(name)
+                # print(name)
                 param.requires_grad = False
         if args.local_rank == 0:
             logger.info("***** Running training *****")
