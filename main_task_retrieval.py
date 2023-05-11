@@ -371,7 +371,7 @@ def finetune_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimize
                 logger.info("Epoch: %d/%s, Step: %d/%d, Loss: %f, Accuracy: %f, Time/step: %f", epoch + 1,
                             args.epochs, step + 1,
                             len(train_dataloader),
-                            float(loss), float(accuracy)
+                            float(loss), float(accuracy),
                             (time.time() - start_time) / (log_step * args.gradient_accumulation_steps))
                 start_time = time.time()
 
