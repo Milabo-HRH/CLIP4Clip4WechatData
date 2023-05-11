@@ -46,5 +46,5 @@ class hmcn(torch.nn.Module):
 
         global_layer_output = self.linear(global_layer_activation)
         # local_layer_output = torch.cat(local_layer_outputs, 1)
-        return global_layer_output, local_layer_outputs, 0.5 * global_layer_output + 0.5 * local_layer_outputs[-1]   
+        return global_layer_output, local_layer_outputs[0], 0.5 * global_layer_output + 0.5 * local_layer_outputs[-1]   
 

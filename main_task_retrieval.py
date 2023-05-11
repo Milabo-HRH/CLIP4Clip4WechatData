@@ -111,6 +111,7 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
     parser.add_argument("--save_epoch", default=1, type=int, help="Save model every epoch")
     parser.add_argument('--modal_dropout', type=float, default=0.2, help='Modal Dropout Prob.')
     parser.add_argument('--epsilon', type=float, default=0.8, help='The epsilon of Poly Loss.')
+    parser.add_argument('--gamma', type=float, default=0.2, help='The gamma of cal loss.')
     parser.add_argument('--do_finetune', action= 'store_true', help="Whether to run finetuning.")
     
     args = parser.parse_args()
