@@ -368,10 +368,10 @@ def finetune_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimize
 
             global_step += 1
             if global_step % log_step == 0 and local_rank == 0:
-                logger.info("Epoch: %d/%s, Step: %d/%d, Lr: %s, Loss: %f, Time/step: %f", epoch + 1,
+                logger.info("Epoch: %d/%s, Step: %d/%d, Loss: %f, Accuracy: %f, Time/step: %f", epoch + 1,
                             args.epochs, step + 1,
-                            len(train_dataloader), "-".join([str('%.9f'%itm) for itm in sorted(list(set(optimizer.get_lr())))]),
-                            float(loss),
+                            len(train_dataloader),
+                            float(loss), float(accuracy)
                             (time.time() - start_time) / (log_step * args.gradient_accumulation_steps))
                 start_time = time.time()
 
