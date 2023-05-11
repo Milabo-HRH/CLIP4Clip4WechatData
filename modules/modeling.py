@@ -590,7 +590,8 @@ class ConcatNet (nn.Module):
         else:
             # todo: add loss
             
-            return self.cal_focal_loss(sym_out, groud_truth['label'], self.loss_func)+self.args.gamma*self.cal_focal_loss(global_out, groud_truth['label_v2'], self.loss_func)+self.args.gamma*self.cal_focal_loss(local_out, groud_truth['label_v1'], self.loss_func)
+            # return self.cal_focal_loss(sym_out, groud_truth['label'], self.loss_func)
+            return self.cal_hierarchy_loss(global_out, local_out, sym_out, groud_truth, self.loss_func)
     # @staticmethod
     def cal_focal_loss(self, prediction, label, loss_func):
         label = label.squeeze(dim=1)
@@ -605,3 +606,23 @@ class ConcatNet (nn.Module):
             torch.distributed.barrier()
             accuracy = accuracy.mean()
         return loss, accuracy, pred_label_id, label
+    
+    def cal_hierarchy_loss(self, global_out, local_out, prediction, ground_truth, loss_func):
+        label_v1 = ground_truth['label_v1'].squeeze(dim=1)
+        label_v2 = ground_truth['label_v2'].squeeze(dim=1)
+        label = ground_truth['label'].squeeze(dim=1)
+        loss_v1 = loss_func(local_out, label_v1)
+        loss_v2 = loss_func(prediction, label_v2) + self.args.gamma*loss_func(global_out, label_v2)
+        loss = self.args.gamma*loss_v1 + loss_v2
+        loss = allgather(loss, self.args)
+        # loss.requires_grad = True
+        with torch.no_grad():
+            pred_label_id = torch.argmax(prediction, dim=1)
+            accuracy = (label == pred_label_id).float()#.sum() / label.shape[0]
+            accuracy = allgather(accuracy, self.args)
+            
+            torch.distributed.barrier()
+            accuracy = accuracy.mean()
+        return loss, accuracy, pred_label_id, label
+            
+        
