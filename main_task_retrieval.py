@@ -704,8 +704,8 @@ def main():
         coef_lr = args.coef_lr
         optimizer, scheduler, model = prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, args.local_rank, coef_lr=coef_lr)
         for name, param in model.named_parameters():
-            if(name.startswith("net1")):
-            # print(name)
+            if(name.startswith("module.net1")):
+                print(name)
                 param.requires_grad = False
         if args.local_rank == 0:
             logger.info("***** Running training *****")
@@ -742,7 +742,7 @@ def main():
             if args.local_rank == 0:
                 logger.info("Epoch %d/%s Finished, Train Loss: %f, Train Accuracy: %f", epoch + 1, args.epochs, tr_loss, tr_accu)
                 if((epoch+1)%args.save_epoch==0):
-                    output_model_file = save_model(epoch, args, model.net2, optimizer, tr_loss, type_name="finetuning")
+                    output_model_file = save_model(epoch, args, model, optimizer, tr_loss, type_name="finetuning")
     elif args.do_eval:
         if args.local_rank == 0:
             eval_epoch(args, model, test_dataloader, device, n_gpu)
