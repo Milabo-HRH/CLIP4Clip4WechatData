@@ -19,9 +19,10 @@ from cn_clip.clip import _tokenizer as tokenizer
 
 from util import parallel_apply, get_logger
 from dataloaders.data_dataloaders import DATALOADER_DICT
-
+from sklearn.metrics import f1_score
+from category_id_map import lv2id_to_lv1id
 os.environ['MASTER_ADDR'] = 'localhost'
-os.environ['MASTER_PORT'] = '12375'
+os.environ['MASTER_PORT'] = '12376'
 torch.distributed.init_process_group(backend="nccl")
 
 global logger
@@ -384,6 +385,62 @@ def finetune_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimize
     total_accuracy = total_accuracy / len(train_dataloader)
     return total_loss, total_accuracy, global_step
 
+def eval_fine_epoch(args, model, eval_dataloader, device, n_gpu, global_step, local_rank=0):
+    global logger
+    torch.cuda.empty_cache()
+    model.eval()
+    log_step = args.n_display
+    start_time = time.time()
+    all_pred_label_ids = []
+    all_label = []
+    
+    for step, batch in enumerate(eval_dataloader):
+        if n_gpu == 1:
+            # multi-gpu does scattering it-self
+            batch = tuple(t.to(device=device, non_blocking=True) for t in batch)
+
+        input_ids, input_mask, segment_ids, video, video_mask, groud_truth = batch
+        loss, accuracy, pred_label_id, label = model(input_ids, segment_ids, input_mask, video, video_mask, groud_truth)
+
+        # if n_gpu > 1:
+        #     loss = loss.mean()  # mean() to average on multi-gpu.
+        # if args.gradient_accumulation_steps > 1:
+        #     loss = loss / args.gradient_accumulation_steps
+
+        # loss.backward()
+
+        # total_loss += float(loss)
+        # total_accuracy += float(accuracy)
+        # if (step + 1) % args.gradient_accumulation_steps == 0:
+
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+
+
+            # optimizer.step()
+            # optimizer.zero_grad()
+
+            # # https://github.com/openai/CLIP/issues/46
+            # if hasattr(model, 'module'):
+            #     torch.clamp_(model.module.clip.logit_scale.data, max=np.log(100))
+            # else:
+            #     torch.clamp_(model.clip.logit_scale.data, max=np.log(100))
+
+            # global_step += 1
+            # if global_step % log_step == 0 and local_rank == 0:
+            #     logger.info("Epoch: %d/%s, Step: %d/%d, Lr: %s, Loss: %f, Accuracy: %f, Time/step: %f", epoch + 1,
+            #                 args.epochs, step + 1,
+            #                 len(train_dataloader), "-".join([str('%.9f'%itm) for itm in sorted(list(set(optimizer.get_lr())))]), 
+            #                 float(loss), float(accuracy),
+            #                 (time.time() - start_time) / (log_step * args.gradient_accumulation_steps))
+            #     start_time = time.time()
+        all_label.extend(label)
+        all_pred_label_ids.extend(pred_label_id)
+            
+    y_pred = lv2id_to_lv1id(all_pred_label_ids)
+    y_true = lv2id_to_lv1id(all_label)
+    F1_score = (f1_score(all_label, all_pred_label_ids, average='macro')+f1_score(all_label, all_pred_label_ids, average='micro')+f1_score(y_true, y_pred, average='macro')+f1_score(y_true, y_pred, average='micro'))/4
+    return F1_score
+
 def _run_on_single_gpu(model, batch_list_t, batch_list_v, batch_sequence_output_list, batch_visual_output_list):
     sim_matrix = []
     for idx1, b1 in enumerate(batch_list_t):
@@ -702,7 +759,7 @@ def main():
         #     model = load_model(-1, args, n_gpu, device, model_file=best_output_model_file)
         #     eval_epoch(args, model, test_dataloader, device, n_gpu)
     elif args.do_finetune:
-        train_dataloader, train_length, train_sampler = DATALOADER_DICT[args.datatype]["val"](args, tokenizer)
+        train_dataloader, train_length = DATALOADER_DICT[args.datatype]["test"](args, tokenizer)
         num_train_optimization_steps = (int(len(train_dataloader) + args.gradient_accumulation_steps - 1)
                                         / args.gradient_accumulation_steps) * args.epochs
 
@@ -728,50 +785,46 @@ def main():
             resumed_loss = checkpoint['loss']
         
         global_step = 0
-        for epoch in range(resumed_epoch, args.epochs):
-            if epoch == 0 or epoch == 5 or epoch == resumed_epoch:
-                vis = False
-                if epoch == 0:
-                    args.freeze_layer_num = 12
-                else:
-                    args.freeze_layer_num = 6
-                    vis = True
-                for name, param in model.module.net1.named_parameters():
-                    if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
-                        or name.find("ln_4.") == 0 or name.find("visual.proj") == 0:
-                            continue
-                    if name.find("clip.bert.encoder.layer.") == 0:
-                        layer_num = int(name.split(".")[4])
-                        if layer_num >= args.freeze_layer_num:
-                            param.requires_grad = True
-                            continue
-                    if name.find("clip") == 0:
-                        param.requires_grad = False
-                        print(name)
-                    elif not vis:
-                        param.requires_grad = False
-                        print(name)
-                    else:
-                        param.requires_grad = True
-            # NoMem = True
+        # for epoch in range(resumed_epoch, args.epochs):
+            # if epoch == 0 or epoch == 5 or epoch == resumed_epoch:
+            #     vis = False
+            #     if epoch == 0:
+            #         args.freeze_layer_num = 12
+            #     else:
+            #         args.freeze_layer_num = 6
+            #         vis = True
+            #     for name, param in model.module.net1.named_parameters():
+            #         if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
+            #             or name.find("ln_4.") == 0 or name.find("visual.proj") == 0:
+            #                 continue
+            #         if name.find("clip.bert.encoder.layer.") == 0:
+            #             layer_num = int(name.split(".")[4])
+            #             if layer_num >= args.freeze_layer_num:
+            #                 param.requires_grad = True
+            #                 continue
+            #         if name.find("clip") == 0:
+            #             param.requires_grad = False
+            #             print(name)
+            #         elif not vis:
+            #             param.requires_grad = False
+            #             print(name)
+            #         else:
+            #             param.requires_grad = True
+            # # NoMem = True
             # while(NoMem):
             #     try:
-            train_sampler.set_epoch(epoch)
-            tr_loss, tr_accu, global_step = finetune_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
-                                       scheduler, global_step, local_rank=args.local_rank)
+            # train_sampler.set_epoch(epoch)
+        F1_score = eval_fine_epoch(args, model, train_dataloader, device, n_gpu,
+                                        global_step, local_rank=args.local_rank)
             #     except:
             #         torch.cuda.empty_cache()
             #         logger.info("Out of memory, retrying...")
             #         time.sleep(100)
             #     else:
             #         NoMem = False
-            if args.local_rank == 0:
-                logger.info("Epoch %d/%s Finished, Train Loss: %f, Train Accuracy: %f", epoch + 1, args.epochs, tr_loss, tr_accu)
-                if((epoch+1)%args.save_epoch==0):
-                    output_model_file = save_model(epoch, args, model, optimizer, tr_loss, type_name="finetuning")
-    elif args.do_eval:
         if args.local_rank == 0:
-            eval_epoch(args, model, test_dataloader, device, n_gpu)
+                logger.info("Finished, F1 Score: %f",F1_score)
+                    
 
 if __name__ == "__main__":
     main()
