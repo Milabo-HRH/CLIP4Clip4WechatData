@@ -113,6 +113,7 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
     parser.add_argument('--epsilon', type=float, default=0.8, help='The epsilon of Poly Loss.')
     parser.add_argument('--gamma', type=float, default=0.2, help='The gamma of cal loss.')
     parser.add_argument('--do_finetune', action= 'store_true', help="Whether to run finetuning.")
+    parser.add_argument('--load_finetune', type=str, default=None, help="Load finetune model.")
     
     args = parser.parse_args()
 
@@ -206,6 +207,10 @@ def prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, loc
         model_c = ConcatNet(model, model_h, args)
         model_c.to(device)
         model = model_c
+        if args.load_finetune:
+            model_state_dict = torch.load(args.load_finetune, map_location='cpu')
+            logger.info("Model loaded from %s", args.load_finetune)
+            model.load_state_dict(state_dict=model_state_dict)
     if hasattr(model, 'module'):
         model = model.module
     
@@ -703,10 +708,7 @@ def main():
 
         coef_lr = args.coef_lr
         optimizer, scheduler, model = prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, args.local_rank, coef_lr=coef_lr)
-        for name, param in model.named_parameters():
-            if(name.startswith("module.net1")):
-                # print(name)
-                param.requires_grad = False
+        
         if args.local_rank == 0:
             logger.info("***** Running training *****")
             logger.info("  Num examples = %d", train_length)
@@ -727,6 +729,30 @@ def main():
         
         global_step = 0
         for epoch in range(resumed_epoch, args.epochs):
+            if epoch == 0 or epoch == 5:
+                vis = False
+                if epoch == 0:
+                    args.freeze_layer_num = 12
+                else:
+                    args.freeze_layer_num = 6
+                    vis = True
+                for name, param in model.net1.named_parameters():
+                    if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
+                        or name.find("ln_4.") == 0 or name.find("visual.proj") == 0:
+                            continue
+                    if name.find("clip.bert.encoder.layer.") == 0:
+                        layer_num = int(name.split(".")[4])
+                        if layer_num >= args.freeze_layer_num:
+                            param.requires_grad = True
+                            continue
+                    if name.find("clip") == 0:
+                        param.requires_grad = False
+                        print(name)
+                    elif not vis:
+                        param.requires_grad = False
+                        print(name)
+                    else:
+                        param.requires_grad = True
             # NoMem = True
             # while(NoMem):
             #     try:
