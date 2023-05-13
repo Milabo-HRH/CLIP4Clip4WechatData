@@ -215,7 +215,7 @@ def prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, loc
         model = model.module
     
     param_optimizer = list(model.named_parameters())
-    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']
+    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight', "ln"]
 
     decay_param_tp = [(n, p) for n, p in param_optimizer if not any(nd in n for nd in no_decay)]
     no_decay_param_tp = [(n, p) for n, p in param_optimizer if any(nd in n for nd in no_decay)]
@@ -729,7 +729,7 @@ def main():
         
         global_step = 0
         for epoch in range(resumed_epoch, args.epochs):
-            if epoch == 0 or epoch == 5:
+            if epoch == 0 or epoch == 5 or epoch == resumed_epoch:
                 vis = False
                 if epoch == 0:
                     args.freeze_layer_num = 12
