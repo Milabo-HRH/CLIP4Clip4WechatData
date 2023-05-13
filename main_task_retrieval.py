@@ -736,7 +736,7 @@ def main():
                 else:
                     args.freeze_layer_num = 6
                     vis = True
-                for name, param in model.net1.named_parameters():
+                for name, param in model.module.net1.named_parameters():
                     if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
                         or name.find("ln_4.") == 0 or name.find("visual.proj") == 0:
                             continue
