@@ -433,6 +433,10 @@ def eval_fine_epoch(args, model, eval_dataloader, device, n_gpu, global_step, lo
             #                 float(loss), float(accuracy),
             #                 (time.time() - start_time) / (log_step * args.gradient_accumulation_steps))
             #     start_time = time.time()
+        print(pred_label_id.shape)
+        print(label.shape)
+        print(type(pred_label_id))
+        print(type(label))
         all_pred_label_ids = torch.cat((all_pred_label_ids, pred_label_id), dim=0)
         all_label = torch.cat((all_label, label), dim=0)
     print(all_label.shape)
