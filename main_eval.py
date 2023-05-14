@@ -436,11 +436,15 @@ def eval_fine_epoch(args, model, eval_dataloader, device, n_gpu, global_step, lo
         torch.cat((all_pred_label_ids, pred_label_id), dim=0)
         torch.cat((all_label, label), dim=0)
     all_label = all_label.cpu().numpy()
+    print(all_label.shape)
     all_pred_label_ids = all_pred_label_ids.cpu().numpy()
+    print(all_pred_label_ids.shape)
     # y_pred = lv2id_to_lv1id(all_pred_label_ids)
     y_pred = list(map(lv2id_to_lv1id, all_pred_label_ids.tolist()))
+    print(len(y_pred))
     # y_true = lv2id_to_lv1id(all_label)
     y_true = list(map(lv2id_to_lv1id, all_label.tolist()))
+    print(len(y_true))
     F1_score = (f1_score(all_label, all_pred_label_ids, average='macro')+f1_score(all_label, all_pred_label_ids, average='micro')+f1_score(y_true, y_pred, average='macro')+f1_score(y_true, y_pred, average='micro'))/4
     return F1_score
 
