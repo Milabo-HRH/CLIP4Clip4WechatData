@@ -391,8 +391,8 @@ def eval_fine_epoch(args, model, eval_dataloader, device, n_gpu, global_step, lo
     model.eval()
     log_step = args.n_display
     start_time = time.time()
-    all_pred_label_ids = []
-    all_label = []
+    all_pred_label_ids = torch.tensor([], dtype=torch.long, device=device)
+    all_label = torch.tensor([], dtype=torch.long, device=device)
     
     for step, batch in enumerate(eval_dataloader):
         if n_gpu == 1:
@@ -433,8 +433,8 @@ def eval_fine_epoch(args, model, eval_dataloader, device, n_gpu, global_step, lo
             #                 float(loss), float(accuracy),
             #                 (time.time() - start_time) / (log_step * args.gradient_accumulation_steps))
             #     start_time = time.time()
-        all_label.extend(label)
-        all_pred_label_ids.extend(pred_label_id)
+        torch.cat((all_pred_label_ids, pred_label_id), dim=0)
+        torch.cat((all_label, label), dim=0)
             
     # y_pred = lv2id_to_lv1id(all_pred_label_ids)
     y_pred = list(map(lv2id_to_lv1id, all_pred_label_ids.tolist()))
