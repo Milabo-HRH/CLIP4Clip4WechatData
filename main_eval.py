@@ -437,9 +437,9 @@ def eval_fine_epoch(args, model, eval_dataloader, device, n_gpu, global_step, lo
         all_pred_label_ids.extend(pred_label_id)
             
     # y_pred = lv2id_to_lv1id(all_pred_label_ids)
-    y_pred = list(map(lv2id_to_lv1id, all_pred_label_ids))
+    y_pred = list(map(lv2id_to_lv1id, all_pred_label_ids.item()))
     # y_true = lv2id_to_lv1id(all_label)
-    y_true = list(map(lv2id_to_lv1id, all_label))
+    y_true = list(map(lv2id_to_lv1id, all_label.item()))
     F1_score = (f1_score(all_label, all_pred_label_ids, average='macro')+f1_score(all_label, all_pred_label_ids, average='micro')+f1_score(y_true, y_pred, average='macro')+f1_score(y_true, y_pred, average='micro'))/4
     return F1_score
 
