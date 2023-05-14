@@ -162,7 +162,7 @@ class Wechat_Dataloader_finetune(Dataset):
             subset="val",
             num_thread_reader=1,
     ):
-        self.json_path = os.path.join(json_path, "labeled.json")
+        self.json_path = os.path.join(json_path, "train.json")
         self.data = json.load(open(self.json_path, 'r'))
         self.feature_framerate = feature_framerate
         self.max_words = max_words
@@ -294,7 +294,7 @@ class Wechat_Dataloader_eval(Dataset):
             subset="val",
             num_thread_reader=1,
     ):
-        self.json_path = os.path.join(json_path, "test_a.json")
+        self.json_path = os.path.join(json_path, "test.json")
         self.data = json.load(open(self.json_path, 'r'))
         self.feature_framerate = feature_framerate
         self.max_words = max_words

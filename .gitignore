@@ -1,5 +1,6 @@
 .git
 .idea
+test.py
 *.pt
 modules/__pycache__/*
 data/*
