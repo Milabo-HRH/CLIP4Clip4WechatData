@@ -19,7 +19,7 @@ from cn_clip.clip import _tokenizer as tokenizer
 
 from util import parallel_apply, get_logger
 from dataloaders.data_dataloaders import DATALOADER_DICT
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, accuracy_score
 from category_id_map import lv2id_to_lv1id
 os.environ['MASTER_ADDR'] = 'localhost'
 os.environ['MASTER_PORT'] = '12376'
@@ -451,8 +451,10 @@ def eval_fine_epoch(args, model, eval_dataloader, device, n_gpu, global_step, lo
     # y_true = lv2id_to_lv1id(all_label)
     y_true = list(map(lv2id_to_lv1id, all_label.tolist()))
     # print(len(y_true))
-    F1_score = (f1_score(all_label, all_pred_label_ids, average='macro')+f1_score(all_label, all_pred_label_ids, average='micro')+f1_score(y_true, y_pred, average='macro')+f1_score(y_true, y_pred, average='micro'))/4
-    return F1_score
+    F1_lv1 = (f1_score(y_true, y_pred, average='macro')+f1_score(y_true, y_pred, average='micro'))/2
+    F1_lv2 = (f1_score(all_label, all_pred_label_ids, average='macro')+f1_score(all_label, all_pred_label_ids, average='micro'))/2
+    F1_score = (F1_lv1+F1_lv2)/2
+    return F1_lv1, F1_lv2, F1_score
 
 def _run_on_single_gpu(model, batch_list_t, batch_list_v, batch_sequence_output_list, batch_visual_output_list):
     sim_matrix = []
@@ -827,7 +829,7 @@ def main():
             # while(NoMem):
             #     try:
             # train_sampler.set_epoch(epoch)
-        F1_score = eval_fine_epoch(args, model, train_dataloader, device, n_gpu,
+        F1_lv1, F1_lv2, F1_score = eval_fine_epoch(args, model, train_dataloader, device, n_gpu,
                                         global_step, local_rank=args.local_rank)
             #     except:
             #         torch.cuda.empty_cache()
@@ -836,7 +838,7 @@ def main():
             #     else:
             #         NoMem = False
         if args.local_rank == 0:
-                logger.info("Finished, F1 Score: %f",F1_score)
+                logger.info("Finished, F1 Score: %f, F1 Lv1 score: %f, F1 Lv2 score: %f",F1_score, F1_lv1, F1_lv2)
                     
 
 if __name__ == "__main__":

@@ -156,8 +156,9 @@ main_task_retrieval.py --do_train --num_thread_reader=2 \
 ### Wechat
 
 ```sh
-DATA_PATH=[Your Wechat data and videos path]
-python -m torch.distributed.launch --nproc_per_node=2 main_task_retrieval.py --do_finetune --num_thread_reader=2 --epochs=2 --batch_size=128 --n_display=50 --data_path ./data/annotations --features_path ./data/zip_feats/pretrain.zip --output_dir ckpts/ckpt_wechat_retrieval_looseType --lr 1e-4 --max_words 32 --max_frames 32 --batch_size_val 16 --datatype wechat --feature_framerate 1 --coef_lr 1e-3 --freeze_layer_num 0  --slice_framepos 2 --loose_type --linear_patch 2d --sim_header meanP --pretrained_clip_name ./modules/clip_cn_vit-b-16.pt
+python -m torch.distributed.launch --nproc_per_node=1 main_task_retrieval.py --do_finetune --num_thread_reader=36 --epochs=50 --batch_size=128 --n_display=50 --data_path ./data/annotations --features_path ./data/zip_feats/pretrain.zip --output_dir ckpts/ckpt_wechat_retrieval_looseType --lr 5e-4 --max_words 32 --max_frames 32 --batch_size_val 16 --datatype wechat --feature_framerate 1 --coef_lr 1e-3 --freeze_layer_num 0  --slice_framepos 2 --save_epoch 5 --loose_type --linear_patch 2d --sim_header meanP --pretrained_clip_name ./modules/clip_cn_vit-b-16.pt --res ckpts/ckpt_wechat_retrieval_looseType/best_perform.bin --load_finetune ckpts/ckpt_wechat_retrieval_looseType/pytorch_model.bin.finetuning.4 --resume_model ckpts/ckpt_wechat_retrieval_looseType/pytorch_opt.bin.finetuning.4
+
+python -m torch.distributed.launch --nproc_per_node=1 main_eval.py --do_finetune --num_thread_reader=36 --epochs=50 --batch_size=128 --n_display=50 --data_path ./data/annotations --features_path ./data/zip_feats/pretrain.zip --output_dir ckpts/ckpt_wechat_retrieval_looseType --lr 5e-4 --max_words 32 --max_frames 32 --batch_size_val 16 --datatype wechat --feature_framerate 1 --coef_lr 1e-3 --freeze_layer_num 0  --slice_framepos 2 --save_epoch 5 --loose_type --linear_patch 2d --sim_header meanP --pretrained_clip_name ./modules/clip_cn_vit-b-16.pt --res ckpts/ckpt_wechat_retrieval_looseType/best_perform.bin --load_finetune ckpts/ckpt_wechat_retrieval_looseType/pytorch_model.bin.finetuning.3
 ```
 
 ### ActivityNet

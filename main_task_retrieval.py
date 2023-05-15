@@ -18,6 +18,8 @@ from modules.optimization import BertAdam
 from cn_clip.clip import _tokenizer as tokenizer
 
 from util import parallel_apply, get_logger
+from sklearn.metrics import f1_score, accuracy_score
+from category_id_map import lv2id_to_lv1id
 from dataloaders.data_dataloaders import DATALOADER_DICT
 
 os.environ['MASTER_ADDR'] = 'localhost'
@@ -225,8 +227,10 @@ def prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, loc
 
     no_decay_clip_param_tp = [(n, p) for n, p in no_decay_param_tp if "clip." in n]
     no_decay_noclip_param_tp = [(n, p) for n, p in no_decay_param_tp if "clip." not in n]
-
-    weight_decay = 0.001
+    if args.do_finetune:
+        weight_decay = 0.2
+    else:
+        weight_decay = 0.001
     optimizer_grouped_parameters = [
         {'params': [p for n, p in decay_clip_param_tp], 'weight_decay': weight_decay, 'lr': args.lr * coef_lr},
         {'params': [p for n, p in decay_noclip_param_tp], 'weight_decay': weight_decay},
@@ -249,9 +253,9 @@ def save_model(epoch, args, model, optimizer, tr_loss, type_name=""):
     # Only save the model it-self
     model_to_save = model.module if hasattr(model, 'module') else model
     output_model_file = os.path.join(
-        args.output_dir, "pytorch_model.bin.{}{}".format("" if type_name=="" else type_name+".", epoch))
+        args.output_dir, "pytorch_model.bin.{}{}".format("" if type_name=="" else type_name+".", epoch+1))
     optimizer_state_file = os.path.join(
-        args.output_dir, "pytorch_opt.bin.{}{}".format("" if type_name=="" else type_name+".", epoch))
+        args.output_dir, "pytorch_opt.bin.{}{}".format("" if type_name=="" else type_name+".", epoch+1))
     torch.save(model_to_save.state_dict(), output_model_file)
     torch.save({
             'epoch': epoch,
@@ -542,6 +546,43 @@ def eval_epoch(args, model, test_dataloader, device, n_gpu):
     R1 = tv_metrics['R1']
     return R1
 
+def eval_fine_epoch(args, model, eval_dataloader, device, n_gpu, global_step, local_rank=0):
+    global logger
+    torch.cuda.empty_cache()
+    model.eval()
+    log_step = args.n_display
+    start_time = time.time()
+    all_pred_label_ids = torch.tensor([], dtype=torch.long, device=device)
+    all_label = torch.tensor([], dtype=torch.long, device=device)
+    
+    for step, batch in enumerate(eval_dataloader):
+        if n_gpu == 1:
+            # multi-gpu does scattering it-self
+            batch = tuple(t.to(device=device, non_blocking=True) for t in batch)
+
+        input_ids, input_mask, segment_ids, video, video_mask, groud_truth = batch
+        loss, accuracy, pred_label_id, label = model(input_ids, segment_ids, input_mask, video, video_mask, groud_truth)
+        all_pred_label_ids = torch.cat((all_pred_label_ids, pred_label_id), dim=0)
+        all_label = torch.cat((all_label, label), dim=0)
+    # print(all_label.shape)
+    # print(all_pred_label_ids.shape)
+    all_label = all_label.cpu().numpy()
+    # print(all_label.shape)
+    all_pred_label_ids = all_pred_label_ids.cpu().numpy()
+    # print(all_pred_label_ids.shape)
+    # y_pred = lv2id_to_lv1id(all_pred_label_ids)
+    y_pred = list(map(lv2id_to_lv1id, all_pred_label_ids.tolist()))
+    # print(len(y_pred))
+    # y_true = lv2id_to_lv1id(all_label)
+    y_true = list(map(lv2id_to_lv1id, all_label.tolist()))
+    # print(len(y_true))
+    F1_lv1 = (f1_score(y_true, y_pred, average='macro')+f1_score(y_true, y_pred, average='micro'))/2
+    accu_lv1 = accuracy_score(y_true, y_pred)
+    F1_lv2 = (f1_score(all_label, all_pred_label_ids, average='macro')+f1_score(all_label, all_pred_label_ids, average='micro'))/2
+    accu_lv2 = accuracy_score(all_label, all_pred_label_ids)
+    F1_score = (F1_lv1+F1_lv2)/2
+    return F1_lv1, F1_lv2, F1_score, accu_lv1, accu_lv2
+
 def main():
     global logger
     args = get_args()
@@ -703,6 +744,7 @@ def main():
         #     eval_epoch(args, model, test_dataloader, device, n_gpu)
     elif args.do_finetune:
         train_dataloader, train_length, train_sampler = DATALOADER_DICT[args.datatype]["val"](args, tokenizer)
+        test_dataloader,test_length = DATALOADER_DICT[args.datatype]["test"](args, tokenizer)
         num_train_optimization_steps = (int(len(train_dataloader) + args.gradient_accumulation_steps - 1)
                                         / args.gradient_accumulation_steps) * args.epochs
 
@@ -728,13 +770,14 @@ def main():
             resumed_loss = checkpoint['loss']
         
         global_step = 0
+        best_score = 0.00001
         for epoch in range(resumed_epoch, args.epochs):
-            if epoch == 0 or epoch == 5 or epoch == resumed_epoch:
+            if epoch == 0 or epoch == 20 or epoch == resumed_epoch:
                 vis = False
-                if epoch == 0:
+                if epoch <20:
                     args.freeze_layer_num = 12
                 else:
-                    args.freeze_layer_num = 6
+                    args.freeze_layer_num = 10
                     vis = True
                 for name, param in model.module.net1.named_parameters():
                     if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
@@ -748,9 +791,9 @@ def main():
                     if name.find("clip") == 0:
                         param.requires_grad = False
                         print(name)
-                    elif not vis:
-                        param.requires_grad = False
-                        print(name)
+                    # elif not vis:
+                    #     param.requires_grad = False
+                    #     print(name)
                     else:
                         param.requires_grad = True
             # NoMem = True
@@ -767,8 +810,13 @@ def main():
             #         NoMem = False
             if args.local_rank == 0:
                 logger.info("Epoch %d/%s Finished, Train Loss: %f, Train Accuracy: %f", epoch + 1, args.epochs, tr_loss, tr_accu)
-                if((epoch+1)%args.save_epoch==0):
+                F1_lv1, F1_lv2, F1_score, accu_lv1, accu_lv2 = eval_fine_epoch(args, model, test_dataloader, device, n_gpu,
+                                        global_step, local_rank=args.local_rank) 
+                # if F1_score > best_score:
+                if (epoch+1)%args.save_epoch == 0:
                     output_model_file = save_model(epoch, args, model, optimizer, tr_loss, type_name="finetuning")
+                    # best_score = F1_score
+                    logger.info("The model is: {}, the F1 is: {:.4f}, the Lv1 F1 is: {:.4f}, the Accuracy is {:.4f}, the Lv1 Accuracy is {:.4f}".format(output_model_file, F1_score, F1_lv1, accu_lv2, accu_lv1))
     elif args.do_eval:
         if args.local_rank == 0:
             eval_epoch(args, model, test_dataloader, device, n_gpu)
