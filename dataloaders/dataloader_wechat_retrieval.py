@@ -152,7 +152,7 @@ class Wechat_Dataloader_finetune(Dataset):
             json_path,
             features_path,
             tokenizer,
-            max_words=30,
+            max_words=96,
             feature_framerate=1.0,
             max_frames=32,
             ocr=False,
@@ -207,7 +207,7 @@ class Wechat_Dataloader_finetune(Dataset):
                 words = self.tokenizer.tokenize("")
                 pass
             else:
-                words = self.tokenizer.tokenize(self.data[video_id]['title'])
+                words = self.tokenizer.tokenize(self.data[video_id]['title']) + self.tokenizer.tokenize(self.data[video_id]['asr'])
 
             words = [self.SPECIAL_TOKEN["CLS_TOKEN"]] + words
             total_length_with_CLS = self.max_words - 1
