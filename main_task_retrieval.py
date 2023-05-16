@@ -48,7 +48,7 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
     parser.add_argument('--n_display', type=int, default=100, help='Information display frequence')
     parser.add_argument('--video_dim', type=int, default=1024, help='video feature dimension')
     parser.add_argument('--seed', type=int, default=42, help='random seed')
-    parser.add_argument('--max_words', type=int, default=20, help='')
+    parser.add_argument('--max_words', type=int, default=128, help='')
     parser.add_argument('--max_frames', type=int, default=32, help='')
     parser.add_argument('--feature_framerate', type=int, default=1, help='')
     parser.add_argument('--margin', type=float, default=0.1, help='margin for loss')
@@ -174,7 +174,7 @@ def init_device(args, local_rank):
     if args.batch_size % args.n_gpu != 0 or args.batch_size_val % args.n_gpu != 0:
         raise ValueError("Invalid batch_size/batch_size_val and n_gpu parameter: {}%{} and {}%{}, should be == 0".format(
             args.batch_size, args.n_gpu, args.batch_size_val, args.n_gpu))
-
+    args.device = device
     return device, n_gpu
 
 def init_model(args, device, n_gpu, local_rank):
