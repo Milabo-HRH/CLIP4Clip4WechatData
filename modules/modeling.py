@@ -584,9 +584,10 @@ class ConcatNet (nn.Module):
         self.net2.append(
             nn.Sequential(
                 nn.Linear(1024, 1024 * 4),
-                QuickGELU(),
-                LayerNorm(4096),
+                # QuickGELU(),
+                # LayerNorm(4096),
                 nn.Linear(1024 * 4, 200),
+                nn.ReLU(),
                 nn.Dropout(p=args.modal_dropout)
         ))
         self.loss_func = PolyLoss(softmax=True, epsilon=args.epsilon, reduction='none')
