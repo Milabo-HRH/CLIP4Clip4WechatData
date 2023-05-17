@@ -6,8 +6,9 @@ from dataloaders.dataloader_msvd_retrieval import MSVD_DataLoader
 from dataloaders.dataloader_lsmdc_retrieval import LSMDC_DataLoader
 from dataloaders.dataloader_activitynet_retrieval import ActivityNet_DataLoader
 from dataloaders.dataloader_didemo_retrieval import DiDeMo_DataLoader
-from dataloaders.dataloader_wechat_retrieval import Wechat_DataLoader, Wechat_Dataloader_finetune, Wechat_Dataloader_eval
-
+from dataloaders.dataloader_wechat_retrieval import Wechat_DataLoader, Wechat_Dataloader_finetune, Wechat_Dataloader_eval, Wechat_Dataloader_ssl, Wechat_DataLoader_unlbl
+import os
+import numpy as np
 def dataloader_msrvtt_train(args, tokenizer):
     msrvtt_dataset = MSRVTT_TrainDataLoader(
         csv_path=args.train_csv,
@@ -320,11 +321,90 @@ def dataloader_Wechat_test(args, tokenizer, subset="test"):
     dataloader_wechat = DataLoader(
         wechat_testset,
         batch_size=args.batch_size_val,
-        num_workers=args.num_thread_reader,
+        num_workers=4,
         shuffle=False,
         drop_last=False,
     )
     return dataloader_wechat, len(wechat_testset)
+
+def dataloader_Wechat_ssl(args, tokenizer, pseudo_lbl_dict, itr=0):
+    lbl_idx = range(90000)
+    train_unlbl_idx = range(90000, 1090000)
+    pseudo_lbl_dict = pickle.load(open(pseudo_lbl, 'rb'))
+    pseudo_idx = pseudo_lbl_dict['pseudo_idx']
+    pseudo_target = pseudo_lbl_dict['pseudo_target']
+    nl_idx = pseudo_lbl_dict['nl_idx']
+    nl_mask = pseudo_lbl_dict['nl_mask']
+    lbl_idx = np.array(lbl_idx + pseudo_idx)
+
+    #balance the labeled and unlabeled data 
+    if len(nl_idx) > len(lbl_idx):
+        exapand_labeled = len(nl_idx) // len(lbl_idx)
+        lbl_idx = np.hstack([lbl_idx for _ in range(exapand_labeled)])
+
+        if len(lbl_idx) < len(nl_idx):
+            diff = len(nl_idx) - len(lbl_idx)
+            lbl_idx = np.hstack((lbl_idx, np.random.choice(lbl_idx, diff)))
+        else:
+            assert len(lbl_idx) == len(nl_idx)
+
+    train_lbl_dataset = Wechat_Dataloader_ssl(
+        json_path=args.data_path,
+        features_path=args.features_path,
+        max_words=args.max_words,
+        feature_framerate=args.feature_framerate,
+        tokenizer=tokenizer,
+        indexs=lbl_idx,
+        max_frames=args.max_frames,
+        frame_order=args.train_frame_order,
+        slice_framepos=args.slice_framepos,
+        ocr = False,
+        pseudo_idx=pseudo_idx,
+        pseudo_target=pseudo_target,
+        nl_idx=nl_idx,
+        nl_mask=nl_mask,
+        num_thread_reader = args.num_thread_reader,
+    )
+    train_nl_dataset = Wechat_Dataloader_ssl(
+        json_path=args.data_path,
+        features_path=args.features_path,
+        max_words=args.max_words,
+        feature_framerate=args.feature_framerate,
+        tokenizer=tokenizer,
+        indexs=np.array(nl_idx),
+        max_frames=args.max_frames,
+        frame_order=args.train_frame_order,
+        slice_framepos=args.slice_framepos,
+        ocr = False,
+        pseudo_idx=pseudo_idx,
+        pseudo_target=pseudo_target,
+        nl_idx=nl_idx,
+        nl_mask=nl_mask,
+        num_thread_reader = args.num_thread_reader,
+    )
+    return train_lbl_dataset, train_nl_dataset
+
+def dataloader_Wechat_unlbl(args, tokenizer):
+    train_unlbl_dataset = Wechat_DataLoader_unlbl(
+        json_path=args.data_path,
+        features_path=args.features_path,
+        max_words=args.max_words,
+        feature_framerate=args.feature_framerate,
+        tokenizer=tokenizer,
+        max_frames=args.max_frames,
+        frame_order=args.train_frame_order,
+        slice_framepos=args.slice_framepos,
+        ocr = False,
+        num_thread_reader = args.num_thread_reader,
+    )
+    dataloader_wechat = DataLoader(
+        train_unlbl_dataset,
+        batch_size=args.batch_size_val,
+        num_workers=4,
+        shuffle=False,
+        drop_last=False,
+    )
+    return dataloader_wechat, len(train_unlbl_dataset)
 
 DATALOADER_DICT = {}
 DATALOADER_DICT["msrvtt"] = {"train":dataloader_msrvtt_train, "val":dataloader_msrvtt_test, "test":None}
@@ -332,4 +412,4 @@ DATALOADER_DICT["msvd"] = {"train":dataloader_msvd_train, "val":dataloader_msvd_
 DATALOADER_DICT["lsmdc"] = {"train":dataloader_lsmdc_train, "val":dataloader_lsmdc_test, "test":dataloader_lsmdc_test}
 DATALOADER_DICT["activity"] = {"train":dataloader_activity_train, "val":dataloader_activity_test, "test":None}
 DATALOADER_DICT["didemo"] = {"train":dataloader_didemo_train, "val":dataloader_didemo_test, "test":dataloader_didemo_test}
-DATALOADER_DICT["wechat"] = {"train":dataloader_Wechat_train, "val":dataloader_Wechat_finetune, "test":dataloader_Wechat_test}
+DATALOADER_DICT["wechat"] = {"train":dataloader_Wechat_train, "val":dataloader_Wechat_finetune, "test":dataloader_Wechat_test, "ssl": dataloader_Wechat_ssl, "unlbl": dataloader_Wechat_unlbl}

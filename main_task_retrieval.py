@@ -15,8 +15,9 @@ from modules.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from modules.modeling import CLIP4Clip, ConcatNet
 from modules.module_hmcn import hmcn
 from modules.optimization import BertAdam
+from modules.module_loss import PolyLoss
 from cn_clip.clip import _tokenizer as tokenizer
-
+from utils.pseudo_labeling_util import pseudo_labeling 
 from util import parallel_apply, get_logger
 from sklearn.metrics import f1_score, accuracy_score
 from category_id_map import lv2id_to_lv1id
@@ -116,7 +117,19 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
     parser.add_argument('--gamma', type=float, default=0.2, help='The gamma of cal loss.')
     parser.add_argument('--do_finetune', action= 'store_true', help="Whether to run finetuning.")
     parser.add_argument('--load_finetune', type=str, default=None, help="Load finetune model.")
-    
+    parser.add_argument('--do_ssl', action='store_true', help="Whether to run semi-supervised learning.")
+    parser.add_argument('--start_itr', type=int, default=0, help="Start iteration.")
+    parser.add_argument('--iterations', type=int, default=10, help="Total iterations.")
+    parser.add_argument('--tau_p', default=0.70, type=float,
+                        help='confidece threshold for positive pseudo-labels, default 0.70')
+    parser.add_argument('--tau_n', default=0.05, type=float,
+                        help='confidece threshold for negative pseudo-labels, default 0.05')
+    parser.add_argument('--kappa_p', default=0.05, type=float,
+                        help='uncertainty threshold for positive pseudo-labels, default 0.05')
+    parser.add_argument('--kappa_n', default=0.005, type=float,
+                        help='uncertainty threshold for negative pseudo-labels, default 0.005')
+    parser.add_argument('--temp_nl', default=2.0, type=float,
+                        help='temperature for generating negative pseduo-labels, default 2.0')
     args = parser.parse_args()
 
     if args.sim_header == "tightTransf":
@@ -583,6 +596,64 @@ def eval_fine_epoch(args, model, eval_dataloader, device, n_gpu, global_step, lo
     F1_score = (F1_lv1+F1_lv2)/2
     return F1_lv1, F1_lv2, F1_score, accu_lv1, accu_lv2
 
+def ssl_train(args, model, lbl_loader, nl_loader, device, n_gpu, optimizer, scheduler, global_step, itr=0):
+    global logger
+    torch.cuda.empty_cache()
+    model.train()
+    log_step = args.n_display
+    start_time = time.time()
+    total_loss = 0
+    total_accuracy = 0
+    
+    train_loader = zip(lbl_loader, nl_loader)
+    
+    for step, (batch_x, batch_nl) in enumerate(train_loader):
+        batch_x = tuple(t.to(device=device, non_blocking=True) for t in batch_x)
+        batch_nl = tuple(t.to(device=device, non_blocking=True) for t in batch_nl)
+        input_ids_x, input_mask_x, segment_ids_x, video_x, video_mask_x, groud_truth_x, _, nl_mask_x = batch_x
+        input_ids_nl, input_mask_nl, segment_ids_nl, video_nl, video_mask_nl, groud_truth_nl, _, nl_mask_nl = batch_nl
+        inputs_ids = torch.cat((input_ids_x, input_ids_nl))
+        inputs_mask = torch.cat((input_mask_x, input_mask_nl))
+        segment_ids = torch.cat((segment_ids_x, segment_ids_nl))
+        video = torch.cat((video_x, video_nl))
+        video_mask = torch.cat((video_mask_x, video_mask_nl))
+        
+        logits = model(input_ids, segment_ids, input_mask, video, video_mask)
+
+        positive_idx = nl_mask.sum(dim=1) == 200 #the mask for negative learning is all ones
+        nl_idx = (nl_mask.sum(dim=1) != 200) * (nl_mask.sum(dim=1) > 0)
+        loss_ce = 0
+        loss_nl = 0
+        
+        if sum(positive_idx) > 0:
+            loss_ce += PolyLoss(logits[positive_idx], groud_truth[positive_idx])
+        if sum(nl_idx*1) > 0:
+            nl_logits = logits[nl_idx]
+            pred_nl = torch.nn.functional.softmax(nl_logits, dim=1)
+            pred_nl = 1 - pred_nl
+            pred_nl = torch.clamp(pred_nl, min=1e-7, max=1.0)
+            nl_mask = nl_mask[nl_idx]
+            y_nl = torch.ones((nl_logits.shape)).to(device=args.device, dtype=logits.dtype)
+            loss_nl += torch.mean((-torch.sum((y_nl * torch.log(pred_nl))*nl_mask, dim = -1))/(torch.sum(nl_mask, dim = -1) + 1e-7))
+        
+        loss = loss_ce + loss_nl
+        loss.backward()
+
+        scheduler.step()
+        optimizer.step()
+        optimizer.zero_grad()
+        
+        global_step += 1
+        if global_step % log_step == 0:
+            logger.info("Epoch: %d/%s, Step: %d/%d, Lr: %s, Loss: %f, Time/step: %f", epoch + 1,
+                        args.epochs, step + 1,
+                        len(train_dataloader), "-".join([str('%.9f'%itm) for itm in sorted(list(set(optimizer.get_lr())))]), 
+                        float(loss), 
+                        (time.time() - start_time) / (log_step * args.gradient_accumulation_steps))
+            start_time = time.time()
+
+
+
 def main():
     global logger
     args = get_args()
@@ -743,42 +814,36 @@ def main():
         #     model = load_model(-1, args, n_gpu, device, model_file=best_output_model_file)
         #     eval_epoch(args, model, test_dataloader, device, n_gpu)
     elif args.do_finetune:
-        train_dataloader, train_length, train_sampler = DATALOADER_DICT[args.datatype]["val"](args, tokenizer)
-        test_dataloader,test_length = DATALOADER_DICT[args.datatype]["test"](args, tokenizer)
-        num_train_optimization_steps = (int(len(train_dataloader) + args.gradient_accumulation_steps - 1)
-                                        / args.gradient_accumulation_steps) * args.epochs
+        if args.do_ssl:
+            start_itr = args.start_itr
+            optimizer, scheduler, model = prep_optimizer(args, model, -1, device, n_gpu, args.local_rank, coef_lr=coef_lr)
+            unlbl_loader = DATALOADER_DICT[args.datatype]["unlbl"](args, tokenizer)
+            for itr in range(start_itr, args.itr):
+                
+                test_dataloader,test_length = DATALOADER_DICT[args.datatype]["test"](args, tokenizer)
 
-        coef_lr = args.coef_lr
-        optimizer, scheduler, model = prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, args.local_rank, coef_lr=coef_lr)
+                coef_lr = args.coef_lr
+                unique_sel_neg, pseudo_label_dict = pseudo_labeling(args, unlbl_loader, model, itr)
         
-        if args.local_rank == 0:
-            logger.info("***** Running training *****")
-            logger.info("  Num examples = %d", train_length)
-            logger.info("  Batch size = %d", args.batch_size)
-            logger.info("  Num steps = %d", num_train_optimization_steps * args.gradient_accumulation_steps)
+                lbl_dataset, nl_dataset = DATALOADER_DICT[args.datatype]["ssl"](args, tokenizer, pseudo_label_dict)
+                lbl_loader = DataLoader(
+                    lbl_dataset,
+                    sampler=RandomSampler(lbl_dataset),
+                    batch_size=lbl_batchsize,
+                    num_workers=4,
+                    drop_last=True)
 
-        best_score = 0.00001
-        best_output_model_file = "None"
-        ## ##############################################################
-        # resume optimizer state besides loss to continue train
-        ## ##############################################################
-        resumed_epoch = 0
-        if args.resume_model:
-            checkpoint = torch.load(args.resume_model, map_location='cpu')
-            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-            resumed_epoch = checkpoint['epoch']+1
-            resumed_loss = checkpoint['loss']
+                nl_loader = DataLoader(
+                    nl_dataset,
+                    sampler=RandomSampler(nl_dataset),
+                    batch_size=nl_batchsize,
+                    num_workers=4,
+                    drop_last=True)
+                resumed_epoch = 0
+                global_step = 0
         
-        global_step = 0
-        best_score = 0.00001
-        for epoch in range(resumed_epoch, args.epochs):
-            if epoch == 0 or epoch == 20 or epoch == resumed_epoch:
-                vis = False
-                if epoch <20:
-                    args.freeze_layer_num = 12
-                else:
-                    args.freeze_layer_num = 10
-                    vis = True
+                args.freeze_layer_num = 10
+                vis = True
                 for name, param in model.module.net1.named_parameters():
                     if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
                         or name.find("ln_4.") == 0 or name.find("visual.proj") == 0:
@@ -791,35 +856,87 @@ def main():
                     if name.find("clip") == 0:
                         param.requires_grad = False
                         print(name)
-                    # elif not vis:
-                    #     param.requires_grad = False
-                    #     print(name)
                     else:
                         param.requires_grad = True
-            # NoMem = True
-            # while(NoMem):
-            #     try:
-            train_sampler.set_epoch(epoch)
-            tr_loss, tr_accu, global_step = finetune_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
-                                       scheduler, global_step, local_rank=args.local_rank)
-            #     except:
-            #         torch.cuda.empty_cache()
-            #         logger.info("Out of memory, retrying...")
-            #         time.sleep(100)
-            #     else:
-            #         NoMem = False
+
+                for epoch in range(resumed_epoch, args.epochs):
+                    ssl_train(args, model, lbl_loader, nl_loader, device, n_gpu, optimizer, scheduler, global_step, itr=itr)
+                    if args.local_rank == 0:
+                        logger.info("Epoch %d/%s Finished, Train Loss: %f, Train Accuracy: %f", epoch + 1, args.epochs, tr_loss, tr_accu)
+                        F1_lv1, F1_lv2, F1_score, accu_lv1, accu_lv2 = eval_fine_epoch(args, model, test_dataloader, device, n_gpu,
+                                                global_step, local_rank=args.local_rank) 
+                        # if F1_score > best_score:
+                        logger.info("The F1 is: {:.4f}, the Lv1 F1 is: {:.4f}, the Accuracy is {:.4f}, the Lv1 Accuracy is {:.4f}".format(F1_score, F1_lv1, accu_lv2, accu_lv1))
+                        if (epoch+1)%args.save_epoch == 0:
+                            output_model_file = save_model(epoch, args, model, optimizer, tr_loss, type_name="ssl_{}".format(itr))
+                    
+        else:
+            train_dataloader, train_length, train_sampler = DATALOADER_DICT[args.datatype]["val"](args, tokenizer)
+            test_dataloader,test_length = DATALOADER_DICT[args.datatype]["test"](args, tokenizer)
+            num_train_optimization_steps = (int(len(train_dataloader) + args.gradient_accumulation_steps - 1)
+                                            / args.gradient_accumulation_steps) * args.epochs
+
+            coef_lr = args.coef_lr
+            optimizer, scheduler, model = prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, args.local_rank, coef_lr=coef_lr)
+            
             if args.local_rank == 0:
-                logger.info("Epoch %d/%s Finished, Train Loss: %f, Train Accuracy: %f", epoch + 1, args.epochs, tr_loss, tr_accu)
-                F1_lv1, F1_lv2, F1_score, accu_lv1, accu_lv2 = eval_fine_epoch(args, model, test_dataloader, device, n_gpu,
-                                        global_step, local_rank=args.local_rank) 
-                # if F1_score > best_score:
-                if (epoch+1)%args.save_epoch == 0:
-                    output_model_file = save_model(epoch, args, model, optimizer, tr_loss, type_name="finetuning")
-                    # best_score = F1_score
+                logger.info("***** Running training *****")
+                logger.info("  Num examples = %d", train_length)
+                logger.info("  Batch size = %d", args.batch_size)
+                logger.info("  Num steps = %d", num_train_optimization_steps * args.gradient_accumulation_steps)
+
+            best_score = 0.00001
+            best_output_model_file = "None"
+            ## ##############################################################
+            # resume optimizer state besides loss to continue train
+            ## ##############################################################
+            resumed_epoch = 0
+            if args.resume_model:
+                checkpoint = torch.load(args.resume_model, map_location='cpu')
+                optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                resumed_epoch = checkpoint['epoch']+1
+                resumed_loss = checkpoint['loss']
+            
+            global_step = 0
+            best_score = 0.00001
+            for epoch in range(resumed_epoch, args.epochs):
+                if epoch == 0 or epoch == 20 or epoch == resumed_epoch:
+                    vis = False
+                    if epoch <20:
+                        args.freeze_layer_num = 12
+                    else:
+                        args.freeze_layer_num = 10
+                        vis = True
+                    for name, param in model.module.net1.named_parameters():
+                        if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
+                            or name.find("ln_4.") == 0 or name.find("visual.proj") == 0:
+                                continue
+                        if name.find("clip.bert.encoder.layer.") == 0:
+                            layer_num = int(name.split(".")[4])
+                            if layer_num >= args.freeze_layer_num:
+                                param.requires_grad = True
+                                continue
+                        if name.find("clip") == 0:
+                            param.requires_grad = False
+                            print(name)
+                        else:
+                            param.requires_grad = True
+
+                train_sampler.set_epoch(epoch)
+                tr_loss, tr_accu, global_step = finetune_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
+                                        scheduler, global_step, local_rank=args.local_rank)
+                if args.local_rank == 0:
+                    logger.info("Epoch %d/%s Finished, Train Loss: %f, Train Accuracy: %f", epoch + 1, args.epochs, tr_loss, tr_accu)
+                    F1_lv1, F1_lv2, F1_score, accu_lv1, accu_lv2 = eval_fine_epoch(args, model, test_dataloader, device, n_gpu,
+                                            global_step, local_rank=args.local_rank) 
+                    # if F1_score > best_score:
                     logger.info("The model is: {}, the F1 is: {:.4f}, the Lv1 F1 is: {:.4f}, the Accuracy is {:.4f}, the Lv1 Accuracy is {:.4f}".format(output_model_file, F1_score, F1_lv1, accu_lv2, accu_lv1))
+                    if (epoch+1)%args.save_epoch == 0:
+                        output_model_file = save_model(epoch, args, model, optimizer, tr_loss, type_name="finetuning")
+                        # best_score = F1_score
+                        
     elif args.do_eval:
         if args.local_rank == 0:
             eval_epoch(args, model, test_dataloader, device, n_gpu)
-
 if __name__ == "__main__":
     main()
