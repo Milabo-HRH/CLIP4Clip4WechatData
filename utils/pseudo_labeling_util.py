@@ -90,7 +90,8 @@ def pseudo_labeling(args, data_loader, model, itr):
             # top5.update(prec5.item(), inputs.shape[0])
             batch_time.update(time.time() - end)
             end = time.time()
-            logger.info("batch_idx: {}, batch_time: {}, data_time: {}".format(batch_idx, batch_time, data_time))
+            if (batch_idx+1) % 10000 == 0:
+                logger.info("labeling:{}/7".format(batch_idx//10000 + 1))
     pseudo_target = np.array(pseudo_target)
     # new_pseudo_target = []
     # for _, t in enumerate(pseudo_target):
