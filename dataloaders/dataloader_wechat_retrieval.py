@@ -7,6 +7,7 @@ import os
 from torch.utils.data import Dataset
 import numpy as np
 
+import pandas as pd
 import copy
 import json
 import random
@@ -435,19 +436,29 @@ class Wechat_Dataloader_ssl(Dataset):
         self.data = json.load(open(self.json_path, 'r'))
         self.nl = json.load(open(os.path.join(json_path, "unlabeled.json"), 'r'))
         self.nl_mask = np.ones((len(self.data)+len(self.nl),200))
-        
+        data = pd.DataFrame(self.data+self.nl)
+        self.label = np.array(data['category_id'].tolist())
+        self.label[pseudo_idx] = pseudo_target
         if nl_mask is not None:
             self.nl_mask[nl_idx] = nl_mask
         
-        if pseudo_idx is not None:
-            self.nl[pseudo_idx]['category_id'] = lv2id_to_category_id(pseudo_target)
         
         if indexs is not None:
             indexs = np.array(indexs)
             self.nl_mask = np.array(self.nl_mask)[indexs]
             self.indexs = indexs
-            self.data = self.data+self.nl
-            self.data = self.data[indexs]   
+            self.data = np.array(self.data+self.nl)
+            # if pseudo_idx is not None:
+            #     # pseudo_idx = np.array(pseudo_idx)
+            #     # self.data = (self.data)
+            #     # self.data[pseudo_idx]['category_id'] = pseudo_target
+            #     # self.pseudo_idx = pseudo_idx
+            #     # self.pseudo_target = pseudo_target
+            #     self.label = np.array(self.label+pseudo_target)
+            self.label = self.label[indexs]
+            self.label = self.label.tolist()
+            self.data = self.data[indexs]
+               
             # self.data = self.data + self.nl[indexs]
         else:
             self.indexs = np.arange(len(self.data))
@@ -560,11 +571,22 @@ class Wechat_Dataloader_ssl(Dataset):
         pairs_text, pairs_mask, pairs_segment = self._get_text(idx)
         video, video_mask = self._get_rawvideo(idx)
         labels = {}
-        label = category_id_to_lv2id(self.data[idx]['category_id'])
-        labels['label'] = torch.LongTensor([label])
-        labels['label_v1'] = torch.LongTensor([CATEGORY_ID_TO_FIRID[self.data[idx]['category_id'][:2]]])
-        labels['label_v2'] = torch.LongTensor([CATEGORY_ID_TO_SECID[self.data[idx]['category_id']]])
-        return pairs_text, pairs_mask, pairs_segment, video, video_mask, labels, self.indexs[idx], self.nl_mask[idx]
+        # if idx < 90000:
+            # print(idx)
+        label = self.label[idx]
+        if self.indexs[idx] < 90000:
+            label = category_id_to_lv2id(label)
+        else:
+            if label == 'nan':
+                label = -1
+            label = int(label)
+        label = torch.LongTensor([label])
+        # else:
+        #     label = category_id_to_lv2id(self.pseudo_target[idx-90000])
+        # labels['label'] = torch.LongTensor([label])
+        # labels['label_v1'] = torch.LongTensor([CATEGORY_ID_TO_FIRID[self.pseudo_target[idx-90000]]])
+        # labels['label_v2'] = labels['label']
+        return pairs_text, pairs_mask, pairs_segment, video, video_mask, label, self.indexs[idx], self.nl_mask[idx]
 
 class Wechat_DataLoader_unlbl(Dataset):
     def __init__(
@@ -587,7 +609,8 @@ class Wechat_DataLoader_unlbl(Dataset):
         
         self.json_path = os.path.join(json_path, "unlabeled.json")
         self.data = json.load(open(self.json_path, 'r'))
-        self.indexs = np.array(range(len(self.data)))
+        self.data = self.data
+        self.indexs = np.array(range(90000, 90000+len(self.data)))
         self.nl_mask = np.ones((len(self.data), 200))
         self.feature_framerate = feature_framerate
         self.max_words = max_words

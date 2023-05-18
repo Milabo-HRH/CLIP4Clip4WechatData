@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from dataloaders.dataloader_msrvtt_retrieval import MSRVTT_DataLoader
 from dataloaders.dataloader_msrvtt_retrieval import MSRVTT_TrainDataLoader
 from dataloaders.dataloader_msvd_retrieval import MSVD_DataLoader
@@ -328,9 +328,9 @@ def dataloader_Wechat_test(args, tokenizer, subset="test"):
     return dataloader_wechat, len(wechat_testset)
 
 def dataloader_Wechat_ssl(args, tokenizer, pseudo_lbl_dict, itr=0):
-    lbl_idx = range(90000)
-    train_unlbl_idx = range(90000, 1090000)
-    pseudo_lbl_dict = pickle.load(open(pseudo_lbl, 'rb'))
+    lbl_idx = list(range(90000))
+    train_unlbl_idx = list(range(90000, 1090000))
+    # pseudo_lbl_dict = pickle.load(open(pseudo_lbl, 'rb'))
     pseudo_idx = pseudo_lbl_dict['pseudo_idx']
     pseudo_target = pseudo_lbl_dict['pseudo_target']
     nl_idx = pseudo_lbl_dict['nl_idx']
@@ -382,7 +382,20 @@ def dataloader_Wechat_ssl(args, tokenizer, pseudo_lbl_dict, itr=0):
         nl_mask=nl_mask,
         num_thread_reader = args.num_thread_reader,
     )
-    return train_lbl_dataset, train_nl_dataset
+    lbl_loader = DataLoader(
+        train_lbl_dataset,
+        sampler=RandomSampler(train_lbl_dataset),
+        batch_size=args.batch_size,
+        num_workers=4,
+        drop_last=True)
+
+    nl_loader = DataLoader(
+        train_nl_dataset,
+        sampler=RandomSampler(train_nl_dataset),
+        batch_size=args.batch_size,
+        num_workers=4,
+        drop_last=True)
+    return lbl_loader, nl_loader
 
 def dataloader_Wechat_unlbl(args, tokenizer):
     train_unlbl_dataset = Wechat_DataLoader_unlbl(

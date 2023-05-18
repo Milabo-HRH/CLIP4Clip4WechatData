@@ -10,6 +10,7 @@ import os
 from metrics import compute_metrics, tensor_text_to_video_metrics, tensor_video_to_text_sim
 import time
 import argparse
+import pickle
 from modules.tokenization_clip import SimpleTokenizer as ClipTokenizer
 from modules.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 from modules.modeling import CLIP4Clip, ConcatNet
@@ -119,7 +120,7 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
     parser.add_argument('--load_finetune', type=str, default=None, help="Load finetune model.")
     parser.add_argument('--do_ssl', action='store_true', help="Whether to run semi-supervised learning.")
     parser.add_argument('--start_itr', type=int, default=0, help="Start iteration.")
-    parser.add_argument('--iterations', type=int, default=10, help="Total iterations.")
+    parser.add_argument('--itr', type=int, default=10, help="Total iterations.")
     parser.add_argument('--tau_p', default=0.70, type=float,
                         help='confidece threshold for positive pseudo-labels, default 0.70')
     parser.add_argument('--tau_n', default=0.05, type=float,
@@ -130,6 +131,8 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
                         help='uncertainty threshold for negative pseudo-labels, default 0.005')
     parser.add_argument('--temp_nl', default=2.0, type=float,
                         help='temperature for generating negative pseduo-labels, default 2.0')
+    parser.add_argument('--no_uncertainty', action='store_true', help="Whether to use uncertainty.")
+    parser.add_argument('no_progress', action='store_true', help="Whether to use progress bar.")
     args = parser.parse_args()
 
     if args.sim_header == "tightTransf":
@@ -608,49 +611,68 @@ def ssl_train(args, model, lbl_loader, nl_loader, device, n_gpu, optimizer, sche
     train_loader = zip(lbl_loader, nl_loader)
     
     for step, (batch_x, batch_nl) in enumerate(train_loader):
-        batch_x = tuple(t.to(device=device, non_blocking=True) for t in batch_x)
-        batch_nl = tuple(t.to(device=device, non_blocking=True) for t in batch_nl)
+        # batch_x = tuple(t.to(device=device, non_blocking=True) for t in batch_x)
+        # batch_nl = tuple(t.to(device=device, non_blocking=True) for t in batch_nl)
         input_ids_x, input_mask_x, segment_ids_x, video_x, video_mask_x, groud_truth_x, _, nl_mask_x = batch_x
         input_ids_nl, input_mask_nl, segment_ids_nl, video_nl, video_mask_nl, groud_truth_nl, _, nl_mask_nl = batch_nl
-        inputs_ids = torch.cat((input_ids_x, input_ids_nl))
-        inputs_mask = torch.cat((input_mask_x, input_mask_nl))
-        segment_ids = torch.cat((segment_ids_x, segment_ids_nl))
-        video = torch.cat((video_x, video_nl))
-        video_mask = torch.cat((video_mask_x, video_mask_nl))
-        
+        input_ids = torch.cat((input_ids_x, input_ids_nl)).to(device)
+        input_mask = torch.cat((input_mask_x, input_mask_nl)).to(device)
+        segment_ids = torch.cat((segment_ids_x, segment_ids_nl)).to(device)
+        video = torch.cat((video_x, video_nl)).to(device)
+        video_mask = torch.cat((video_mask_x, video_mask_nl)).to(device)
+        # print(groud_truth_x)
+        nl_mask = torch.cat((nl_mask_x, nl_mask_nl)).to(device)
+        # groud_truth = np.array(list(map(int, groud_truth_x))+list(map(int, groud_truth_nl)))
+        # groud_truth = torch.from_numpy(groud_truth).to(device)
         logits = model(input_ids, segment_ids, input_mask, video, video_mask)
 
         positive_idx = nl_mask.sum(dim=1) == 200 #the mask for negative learning is all ones
+        positive_idx = positive_idx.cpu().numpy()
+        ground_truth = torch.cat((groud_truth_x, groud_truth_nl)).to(device)
+        ground_truth = ground_truth[positive_idx].squeeze()
+        # print(nl_mask.shape)
+        # print((nl_mask.sum(dim=1) != 200))
+        # print((nl_mask.sum(dim=1) > 0))
+        trig = sum((nl_mask.sum(dim=1) != 200) * (nl_mask.sum(dim=1) > 0) * 1)
         nl_idx = (nl_mask.sum(dim=1) != 200) * (nl_mask.sum(dim=1) > 0)
+        
         loss_ce = 0
         loss_nl = 0
         
         if sum(positive_idx) > 0:
-            loss_ce += PolyLoss(logits[positive_idx], groud_truth[positive_idx])
-        if sum(nl_idx*1) > 0:
+            loss_ce = torch.nn.functional.cross_entropy(logits[positive_idx], ground_truth)
+            # print(ground_truth)
+            # t, _, _, _ = model(input_ids[positive_idx], segment_ids[positive_idx], input_mask[positive_idx], video[positive_idx], video_mask[positive_idx], ground_truth)
+            # loss_ce += t
+        # print(ground_truth.shape)
+        # print(loss_ce)
+        if trig > 0:
+            
             nl_logits = logits[nl_idx]
+            
             pred_nl = torch.nn.functional.softmax(nl_logits, dim=1)
             pred_nl = 1 - pred_nl
             pred_nl = torch.clamp(pred_nl, min=1e-7, max=1.0)
             nl_mask = nl_mask[nl_idx]
             y_nl = torch.ones((nl_logits.shape)).to(device=args.device, dtype=logits.dtype)
             loss_nl += torch.mean((-torch.sum((y_nl * torch.log(pred_nl))*nl_mask, dim = -1))/(torch.sum(nl_mask, dim = -1) + 1e-7))
-        
+            
         loss = loss_ce + loss_nl
         loss.backward()
+        if scheduler is not None:
+            scheduler.step()  # Update learning rate schedule
 
-        scheduler.step()
         optimizer.step()
         optimizer.zero_grad()
         
         global_step += 1
-        if global_step % log_step == 0:
-            logger.info("Epoch: %d/%s, Step: %d/%d, Lr: %s, Loss: %f, Time/step: %f", epoch + 1,
-                        args.epochs, step + 1,
-                        len(train_dataloader), "-".join([str('%.9f'%itm) for itm in sorted(list(set(optimizer.get_lr())))]), 
-                        float(loss), 
-                        (time.time() - start_time) / (log_step * args.gradient_accumulation_steps))
-            start_time = time.time()
+        # if global_step % log_step == 0:
+        #     logger.info("Epoch: %d/%s, Step: %d/%d, Lr: %s, Loss: %f, Time/step: %f", epoch + 1,
+        #                 args.epochs, step + 1,
+        #                 len(train_dataloader), "-".join([str('%.9f'%itm) for itm in sorted(list(set(optimizer.get_lr())))]), 
+        #                 float(loss), 
+        #                 (time.time() - start_time) / (log_step * args.gradient_accumulation_steps))
+        #     start_time = time.time()
 
 
 
@@ -816,29 +838,22 @@ def main():
     elif args.do_finetune:
         if args.do_ssl:
             start_itr = args.start_itr
+            coef_lr = args.coef_lr
             optimizer, scheduler, model = prep_optimizer(args, model, -1, device, n_gpu, args.local_rank, coef_lr=coef_lr)
-            unlbl_loader = DATALOADER_DICT[args.datatype]["unlbl"](args, tokenizer)
+            unlbl_loader, _ = DATALOADER_DICT[args.datatype]["unlbl"](args, tokenizer)
             for itr in range(start_itr, args.itr):
                 
                 test_dataloader,test_length = DATALOADER_DICT[args.datatype]["test"](args, tokenizer)
 
-                coef_lr = args.coef_lr
-                unique_sel_neg, pseudo_label_dict = pseudo_labeling(args, unlbl_loader, model, itr)
-        
-                lbl_dataset, nl_dataset = DATALOADER_DICT[args.datatype]["ssl"](args, tokenizer, pseudo_label_dict)
-                lbl_loader = DataLoader(
-                    lbl_dataset,
-                    sampler=RandomSampler(lbl_dataset),
-                    batch_size=lbl_batchsize,
-                    num_workers=4,
-                    drop_last=True)
-
-                nl_loader = DataLoader(
-                    nl_dataset,
-                    sampler=RandomSampler(nl_dataset),
-                    batch_size=nl_batchsize,
-                    num_workers=4,
-                    drop_last=True)
+                if os.path.exists(f'{args.output_dir}/pseudo_labeling_iteration_{str(itr)}.pkl'):
+                    pseudo_label_dict = pickle.load(open(f'{args.output_dir}/pseudo_labeling_iteration_{str(itr)}.pkl', 'rb'))
+                else:
+                    unique_sel_neg, pseudo_label_dict = pseudo_labeling(args, unlbl_loader, model, itr)
+                    with open(os.path.join(args.output_dir, f'pseudo_labeling_iteration_{str(itr)}.pkl'),"wb") as f:
+                        pickle.dump(pseudo_label_dict,f)
+                        logger.info(f"Save pseudo_labeling_iteration_{str(itr)}.pkl")
+                lbl_loader, nl_loader = DATALOADER_DICT[args.datatype]["ssl"](args, tokenizer, pseudo_label_dict)
+                
                 resumed_epoch = 0
                 global_step = 0
         
@@ -862,11 +877,11 @@ def main():
                 for epoch in range(resumed_epoch, args.epochs):
                     ssl_train(args, model, lbl_loader, nl_loader, device, n_gpu, optimizer, scheduler, global_step, itr=itr)
                     if args.local_rank == 0:
-                        logger.info("Epoch %d/%s Finished, Train Loss: %f, Train Accuracy: %f", epoch + 1, args.epochs, tr_loss, tr_accu)
+                        logger.info("Epoch %d/%s Finished", epoch + 1, args.epochs)
                         F1_lv1, F1_lv2, F1_score, accu_lv1, accu_lv2 = eval_fine_epoch(args, model, test_dataloader, device, n_gpu,
                                                 global_step, local_rank=args.local_rank) 
                         # if F1_score > best_score:
-                        logger.info("The F1 is: {:.4f}, the Lv1 F1 is: {:.4f}, the Accuracy is {:.4f}, the Lv1 Accuracy is {:.4f}".format(F1_score, F1_lv1, accu_lv2, accu_lv1))
+                        logger.info("The F1 is: {:.4f}, the Lv1 F1 is: {:.4f}, the Lv2 F1 is {:.4f}, the Accuracy is {:.4f}, the Lv1 Accuracy is {:.4f}".format(F1_score, F1_lv1, F1_lv2, accu_lv2, accu_lv1))
                         if (epoch+1)%args.save_epoch == 0:
                             output_model_file = save_model(epoch, args, model, optimizer, tr_loss, type_name="ssl_{}".format(itr))
                     

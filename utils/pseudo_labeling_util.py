@@ -8,8 +8,13 @@ from tqdm import tqdm
 from .misc import AverageMeter, accuracy
 from .utils import enable_dropout
 from category_id_map import lv2id_to_category_id
+from util import get_logger
+import os
+global logger
 
 def pseudo_labeling(args, data_loader, model, itr):
+    logger = get_logger(os.path.join(args.output_dir, "log.txt"))
+
     batch_time = AverageMeter()
     data_time = AverageMeter()
     losses = AverageMeter()
@@ -31,8 +36,6 @@ def pseudo_labeling(args, data_loader, model, itr):
     else:
         f_pass = 1
 
-    if not args.no_progress:
-        data_loader = tqdm(data_loader)
 
     with torch.no_grad():
         for batch_idx, batch in enumerate(data_loader):
@@ -87,34 +90,38 @@ def pseudo_labeling(args, data_loader, model, itr):
             # top5.update(prec5.item(), inputs.shape[0])
             batch_time.update(time.time() - end)
             end = time.time()
-
+            logger.info("batch_idx: {}, batch_time: {}, data_time: {}".format(batch_idx, batch_time, data_time))
     pseudo_target = np.array(pseudo_target)
+    # new_pseudo_target = []
+    # for _, t in enumerate(pseudo_target):
+    #     new_pseudo_target.append(lv2id_to_category_id(t))
+    # pseudo_target = np.array(new_pseudo_target)
     # gt_target = np.array(gt_target)
     pseudo_maxstd = np.array(pseudo_maxstd)
     pseudo_idx = np.array(pseudo_idx)
 
     #class balance the selected pseudo-labels
-    if itr < args.class_blnc-1:
-        min_count = 5000000 #arbitary large value
-        for class_idx in range(args.num_classes):
-            class_len = len(np.where(pseudo_target==class_idx)[0])
-            if class_len < min_count:
-                min_count = class_len
-        min_count = max(100, min_count) #this 25 is used to avoid degenarate cases when the minimum count for a certain class is very low
+    # if itr < args.class_blnc-1:
+    #     min_count = 5000000 #arbitary large value
+    #     for class_idx in range(args.num_classes):
+    #         class_len = len(np.where(pseudo_target==class_idx)[0])
+    #         if class_len < min_count:
+    #             min_count = class_len
+    #     min_count = max(100, min_count) #this 25 is used to avoid degenarate cases when the minimum count for a certain class is very low
 
-        blnc_idx_list = []
-        for class_idx in range(args.num_classes):
-            current_class_idx = np.where(pseudo_target==class_idx)
-            if len(np.where(pseudo_target==class_idx)[0]) > 0:
-                current_class_maxstd = pseudo_maxstd[current_class_idx]
-                sorted_maxstd_idx = np.argsort(current_class_maxstd)
-                current_class_idx = current_class_idx[0][sorted_maxstd_idx[:min_count]] #select the samples with lowest uncertainty 
-                blnc_idx_list.extend(current_class_idx)
+    #     blnc_idx_list = []
+    #     for class_idx in range(args.num_classes):
+    #         current_class_idx = np.where(pseudo_target==class_idx)
+    #         if len(np.where(pseudo_target==class_idx)[0]) > 0:
+    #             current_class_maxstd = pseudo_maxstd[current_class_idx]
+    #             sorted_maxstd_idx = np.argsort(current_class_maxstd)
+    #             current_class_idx = current_class_idx[0][sorted_maxstd_idx[:min_count]] #select the samples with lowest uncertainty 
+    #             blnc_idx_list.extend(current_class_idx)
 
-        blnc_idx_list = np.array(blnc_idx_list)
-        pseudo_target = pseudo_target[blnc_idx_list]
-        pseudo_idx = pseudo_idx[blnc_idx_list]
-        # gt_target = gt_target[blnc_idx_list]
+    #     blnc_idx_list = np.array(blnc_idx_list)
+    #     pseudo_target = pseudo_target[blnc_idx_list]
+    #     pseudo_idx = pseudo_idx[blnc_idx_list]
+    #     # gt_target = gt_target[blnc_idx_list]
 
     # pseudo_labeling_acc = (pseudo_target == gt_target)*1
     # pseudo_labeling_acc = (sum(pseudo_labeling_acc)/len(pseudo_labeling_acc))*100
@@ -143,6 +150,6 @@ def pseudo_labeling(args, data_loader, model, itr):
     # nl_accuracy = (flat_pseudo_nl_mask == flat_one_hot_targets)*1
     # nl_accuracy_final = (sum(nl_accuracy)/len(nl_accuracy))*100
     # print(f'Pseudo-Labeling Accuracy (negative): {nl_accuracy_final}, Total Selected: {len(nl_accuracy)}, Unique Samples: {len(pseudo_nl_mask)}')
-    pseudo_label_dict = {'pseudo_idx': pseudo_idx.tolist(), 'pseudo_target':lv2id_to_category_id(pseudo_target.tolist()), 'nl_idx': pseudo_nl_idx, 'nl_mask': pseudo_nl_mask.tolist()}
- 
+    pseudo_label_dict = {'pseudo_idx': pseudo_idx.tolist(), 'pseudo_target':pseudo_target.tolist(), 'nl_idx': pseudo_nl_idx, 'nl_mask': pseudo_nl_mask.tolist()}
+    
     return len(pseudo_nl_mask), pseudo_label_dict

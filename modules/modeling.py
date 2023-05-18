@@ -584,10 +584,10 @@ class ConcatNet (nn.Module):
         self.net2.append(
             nn.Sequential(
                 nn.Linear(1024, 1024 * 4),
-                # QuickGELU(),
-                # LayerNorm(4096),
+                QuickGELU(),
+                LayerNorm(4096),
                 nn.Linear(1024 * 4, 200),
-                nn.ReLU(),
+                # nn.ReLU(),
                 nn.Dropout(p=args.modal_dropout)
         ))
         self.loss_func = PolyLoss(softmax=True, epsilon=args.epsilon, reduction='none')
@@ -621,16 +621,20 @@ class ConcatNet (nn.Module):
         out = self.net1 (input_ids, token_type_ids, attention_mask, video, video_mask)
         # global_out, local_out, sym_out = self.net2(out)
         sym_out = self.net2[0](out)
-        if not groud_truth:   
+        if  groud_truth is None:   
             return sym_out
         else:
             # todo: add loss
             
             return self.cal_hierarchy_loss(sym_out, groud_truth, self.loss_func)
+            # return self.cal_focal_loss(sym_out, groud_truth, self.loss_func)
             #return self.cal_hierarchy_loss(global_out, local_out, sym_out, groud_truth, self.loss_func)
     # @staticmethod
     def cal_focal_loss(self, prediction, label, loss_func):
-        label = label.squeeze(dim=1)
+        if (len(label.shape) == 1):
+            pass
+        else:
+            label = label.squeeze(dim=1)
         loss = loss_func(prediction, label)
         loss = allgather(loss, self.args)
         # loss.requires_grad = True
@@ -638,8 +642,8 @@ class ConcatNet (nn.Module):
             pred_label_id = torch.argmax(prediction, dim=1)
             accuracy = (label == pred_label_id).float()#.sum() / label.shape[0]
             accuracy = allgather(accuracy, self.args)
-            
-            torch.distributed.barrier()
+            # if self.args.n_gpu > 1:
+            #     torch.distributed.barrier()
             accuracy = accuracy.mean()
         return loss, accuracy, pred_label_id, label
     
@@ -657,8 +661,8 @@ class ConcatNet (nn.Module):
             pred_label_id = torch.argmax(prediction, dim=1)
             accuracy = (label == pred_label_id).float()#.sum() / label.shape[0]
             accuracy = allgather(accuracy, self.args)
-            
-            torch.distributed.barrier()
+            if self.args.n_gpu > 1:
+                torch.distributed.barrier()
             accuracy = accuracy.mean()
         return loss, accuracy, pred_label_id, label
 
