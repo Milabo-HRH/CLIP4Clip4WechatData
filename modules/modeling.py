@@ -210,43 +210,7 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
         self.clip = cn_CLIP(**model_info)
         resize_pos_embed(clip_state_dict, self.clip, prefix="module.")
         self.clip.load_state_dict(clip_state_dict)
-        # CLIP Encoders: From OpenAI: CLIP [https://github.com/openai/CLIP] ===>
-        # vit = "visual.proj" in clip_state_dict
-        # assert vit
-        # if vit:
-        #     vision_width = clip_state_dict["visual.conv1.weight"].shape[0]
-        #     vision_layers = len(
-        #         [k for k in clip_state_dict.keys() if k.startswith("visual.") and k.endswith(".attn.in_proj_weight")])
-        #     vision_patch_size = clip_state_dict["visual.conv1.weight"].shape[-1]
-        #     grid_size = round((clip_state_dict["visual.positional_embedding"].shape[0] - 1) ** 0.5)
-        #     image_resolution = vision_patch_size * grid_size
-        # else:
-        #     counts: list = [len(set(k.split(".")[2] for k in clip_state_dict if k.startswith(f"visual.layer{b}"))) for b in
-        #                     [1, 2, 3, 4]]
-        #     vision_layers = tuple(counts)
-        #     vision_width = clip_state_dict["visual.layer1.0.conv1.weight"].shape[0]
-        #     output_width = round((clip_state_dict["visual.attnpool.positional_embedding"].shape[0] - 1) ** 0.5)
-        #     vision_patch_size = None
-        #     assert output_width ** 2 + 1 == clip_state_dict["visual.attnpool.positional_embedding"].shape[0]
-        #     image_resolution = output_width * 32
-
-        # embed_dim = clip_state_dict["text_projection"].shape[1]
-        # context_length = clip_state_dict["positional_embedding"].shape[0]
-        # vocab_size = clip_state_dict["token_embedding.weight"].shape[0]
-        # transformer_width = clip_state_dict["ln_final.weight"].shape[0]
-        # transformer_heads = transformer_width // 64
-        # transformer_layers = len(set(k.split(".")[2] for k in clip_state_dict if k.startswith(f"transformer.resblocks")))
-
-        # show_log(task_config, "\t embed_dim: {}".format(embed_dim))
-        # show_log(task_config, "\t image_resolution: {}".format(image_resolution))
-        # show_log(task_config, "\t vision_layers: {}".format(vision_layers))
-        # show_log(task_config, "\t vision_width: {}".format(vision_width))
-        # show_log(task_config, "\t vision_patch_size: {}".format(vision_patch_size))
-        # show_log(task_config, "\t context_length: {}".format(context_length))
-        # show_log(task_config, "\t vocab_size: {}".format(vocab_size))
-        # show_log(task_config, "\t transformer_width: {}".format(transformer_width))
-        # show_log(task_config, "\t transformer_heads: {}".format(transformer_heads))
-        # show_log(task_config, "\t transformer_layers: {}".format(transformer_layers))
+        
 
         self.linear_patch = '2d'
         if hasattr(task_config, "linear_patch"):
@@ -580,16 +544,17 @@ class ConcatNet (nn.Module):
     def __init__(self, net1, net2, args):
         super(ConcatNet, self) .__init__()
         self.net1 = net1
-        self.net2 = nn.ModuleList()
-        self.net2.append(
-            nn.Sequential(
-                nn.Linear(1024, 1024 * 4),
-                QuickGELU(),
-                LayerNorm(4096),
-                nn.Linear(1024 * 4, 200),
-                # nn.ReLU(),
-                nn.Dropout(p=args.modal_dropout)
-        ))
+        # self.net2 = nn.ModuleList()
+        # self.net2.append(
+        #     nn.Sequential(
+        #         nn.Linear(1024, 1024 * 4),
+        #         QuickGELU(),
+        #         LayerNorm(4096),
+        #         nn.Linear(1024 * 4, 200),
+        #         # nn.ReLU(),
+        #         nn.Dropout(p=args.modal_dropout)
+        # ))
+        self.net2 = net2
         self.loss_func = PolyLoss(softmax=True, epsilon=args.epsilon, reduction='none')
         self.args = args
         self.a = torch.Tensor([
@@ -619,16 +584,16 @@ class ConcatNet (nn.Module):
         ]).T.to(self.args.device)
     def forward(self, input_ids, token_type_ids, attention_mask, video, video_mask=None, groud_truth=None):
         out = self.net1 (input_ids, token_type_ids, attention_mask, video, video_mask)
-        # global_out, local_out, sym_out = self.net2(out)
-        sym_out = self.net2[0](out)
+        global_out, local_out, sym_out = self.net2(out)
+        # sym_out = self.net2[0](out)
         if  groud_truth is None:   
             return sym_out
         else:
             # todo: add loss
             
-            return self.cal_hierarchy_loss(sym_out, groud_truth, self.loss_func)
+            # return self.cal_hierarchy_loss(sym_out, groud_truth, self.loss_func)
             # return self.cal_focal_loss(sym_out, groud_truth, self.loss_func)
-            #return self.cal_hierarchy_loss(global_out, local_out, sym_out, groud_truth, self.loss_func)
+            return self.cal_hierarchy_loss_v1(local_out, sym_out, groud_truth, self.loss_func)
     # @staticmethod
     def cal_focal_loss(self, prediction, label, loss_func):
         if (len(label.shape) == 1):
@@ -646,7 +611,11 @@ class ConcatNet (nn.Module):
             #     torch.distributed.barrier()
             accuracy = accuracy.mean()
         return loss, accuracy, pred_label_id, label
-    
+    def cal_hierarchy_loss_v1(self, local_out, sym_out, groud_truth, loss_func):
+        label_v1 = groud_truth['label_v1'].squeeze(dim=1)
+        loss_v1 = loss_func(local_out, label_v1)
+        loss, accuracy, pred_label_id, label = self.cal_hierarchy_loss(sym_out, groud_truth, loss_func)
+        return loss_v1*self.args.gamma + loss, accuracy, pred_label_id, label 
     def cal_hierarchy_loss(self, prediction, ground_truth, loss_func):
         label_v1 = ground_truth['label_v1'].squeeze(dim=1)
         label_v2 = ground_truth['label_v2'].squeeze(dim=1)

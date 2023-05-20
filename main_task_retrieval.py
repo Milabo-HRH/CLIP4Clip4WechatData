@@ -265,7 +265,7 @@ def prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, loc
        
     return optimizer, scheduler, model
 
-def save_model(epoch, args, model, optimizer, tr_loss, type_name=""):
+def save_model(epoch, args, model, optimizer, tr_loss=None, type_name=""):
     # Only save the model it-self
     model_to_save = model.module if hasattr(model, 'module') else model
     output_model_file = os.path.join(
@@ -273,13 +273,14 @@ def save_model(epoch, args, model, optimizer, tr_loss, type_name=""):
     optimizer_state_file = os.path.join(
         args.output_dir, "pytorch_opt.bin.{}{}".format("" if type_name=="" else type_name+".", epoch+1))
     torch.save(model_to_save.state_dict(), output_model_file)
-    torch.save({
-            'epoch': epoch,
-            'optimizer_state_dict': optimizer.state_dict(),
-            'loss': tr_loss,
-            }, optimizer_state_file)
     logger.info("Model saved to %s", output_model_file)
-    logger.info("Optimizer saved to %s", optimizer_state_file)
+    if tr_loss is not None:
+        torch.save({
+                'epoch': epoch,
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': tr_loss,
+                }, optimizer_state_file)
+        logger.info("Optimizer saved to %s", optimizer_state_file)
     return output_model_file
 
 def load_model(epoch, args, n_gpu, device, model_file=None):
@@ -673,7 +674,8 @@ def ssl_train(args, model, lbl_loader, nl_loader, device, n_gpu, optimizer, sche
         #                 float(loss), 
         #                 (time.time() - start_time) / (log_step * args.gradient_accumulation_steps))
         #     start_time = time.time()
-
+        total_loss += float(loss)
+    return total_loss
 
 
 def main():
@@ -857,7 +859,7 @@ def main():
                 resumed_epoch = 0
                 global_step = 0
         
-                args.freeze_layer_num = 10
+                args.freeze_layer_num = 6
                 vis = True
                 for name, param in model.module.net1.named_parameters():
                     if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
@@ -883,7 +885,7 @@ def main():
                         # if F1_score > best_score:
                         logger.info("The F1 is: {:.4f}, the Lv1 F1 is: {:.4f}, the Lv2 F1 is {:.4f}, the Accuracy is {:.4f}, the Lv1 Accuracy is {:.4f}".format(F1_score, F1_lv1, F1_lv2, accu_lv2, accu_lv1))
                         if (epoch+1)%args.save_epoch == 0:
-                            output_model_file = save_model(epoch, args, model, optimizer, tr_loss, type_name="ssl_{}".format(itr))
+                            output_model_file = save_model(epoch, args, model, optimizer, tr_loss=None, type_name="ssl_{}".format(itr))
                     
         else:
             train_dataloader, train_length, train_sampler = DATALOADER_DICT[args.datatype]["val"](args, tokenizer)
@@ -915,12 +917,12 @@ def main():
             global_step = 0
             best_score = 0.00001
             for epoch in range(resumed_epoch, args.epochs):
-                if epoch == 0 or epoch == 20 or epoch == resumed_epoch:
+                if epoch == 0 or epoch == 10 or epoch == resumed_epoch:
                     vis = False
-                    if epoch <20:
+                    if epoch < 10:
                         args.freeze_layer_num = 12
                     else:
-                        args.freeze_layer_num = 10
+                        args.freeze_layer_num = 6
                         vis = True
                     for name, param in model.module.net1.named_parameters():
                         if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
@@ -945,7 +947,7 @@ def main():
                     F1_lv1, F1_lv2, F1_score, accu_lv1, accu_lv2 = eval_fine_epoch(args, model, test_dataloader, device, n_gpu,
                                             global_step, local_rank=args.local_rank) 
                     # if F1_score > best_score:
-                    logger.info("The model is: {}, the F1 is: {:.4f}, the Lv1 F1 is: {:.4f}, the Accuracy is {:.4f}, the Lv1 Accuracy is {:.4f}".format(output_model_file, F1_score, F1_lv1, accu_lv2, accu_lv1))
+                    logger.info("The F1 is: {:.4f}, the Lv1 F1 is: {:.4f}, the Accuracy is {:.4f}, the Lv1 Accuracy is {:.4f}".format(F1_score, F1_lv1, accu_lv2, accu_lv1))
                     if (epoch+1)%args.save_epoch == 0:
                         output_model_file = save_model(epoch, args, model, optimizer, tr_loss, type_name="finetuning")
                         # best_score = F1_score
