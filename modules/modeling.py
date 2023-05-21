@@ -547,17 +547,17 @@ class ConcatNet (nn.Module):
     def __init__(self, net1, net2, args):
         super(ConcatNet, self) .__init__()
         self.net1 = net1
-        # self.net2 = nn.ModuleList()
-        # self.net2.append(
-        #     nn.Sequential(
-        #         nn.Linear(1024, 1024 * 4),
-        #         QuickGELU(),
-        #         LayerNorm(4096),
-        #         nn.Linear(1024 * 4, 200),
-        #         # nn.ReLU(),
-        #         nn.Dropout(p=args.modal_dropout)
-        # ))
-        self.net2 = net2
+        self.net2 = nn.ModuleList()
+        self.net2.append(
+            nn.Sequential(
+                nn.Linear(1024, 1024 * 4),
+                QuickGELU(),
+                LayerNorm(4096),
+                nn.Linear(1024 * 4, 200),
+                # nn.ReLU(),
+                nn.Dropout(p=args.modal_dropout)
+        ))
+        # self.net2 = net2
         self.loss_func = PolyLoss(softmax=True, epsilon=args.epsilon, reduction='none')
         self.args = args
         self.a = torch.Tensor([
@@ -587,16 +587,16 @@ class ConcatNet (nn.Module):
         ]).T.to(self.args.device)
     def forward(self, input_ids, token_type_ids, attention_mask, video, video_mask=None, groud_truth=None):
         out = self.net1 (input_ids, token_type_ids, attention_mask, video, video_mask)
-        global_out, local_out, sym_out = self.net2(out)
-        # sym_out = self.net2[0](out)
+        # global_out, local_out, sym_out = self.net2(out)
+        sym_out = self.net2[0](out)
         if  groud_truth is None:   
             return sym_out
         else:
             # todo: add loss
             
             # return self.cal_hierarchy_loss(sym_out, groud_truth, self.loss_func)
-            # return self.cal_focal_loss(sym_out, groud_truth, self.loss_func)
-            return self.cal_hierarchy_loss_v1(local_out, sym_out, groud_truth, self.loss_func)
+            return self.cal_focal_loss(sym_out, groud_truth['label'], self.loss_func)
+            # return self.cal_hierarchy_loss_v1(local_out, sym_out, groud_truth, self.loss_func)
     # @staticmethod
     def cal_focal_loss(self, prediction, label, loss_func):
         if (len(label.shape) == 1):

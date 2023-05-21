@@ -133,7 +133,8 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
                         help='temperature for generating negative pseduo-labels, default 2.0')
     parser.add_argument('--no_uncertainty', action='store_true', help="Whether to use uncertainty.")
     parser.add_argument('no_progress', action='store_true', help="Whether to use progress bar.")
-    parser.add_argument('--no_clip', action='store_true', help="Whether to use CLIP.")  
+    parser.add_argument('--no_clip', action='store_true', help="Whether to use CLIP.") 
+    parser.add_argument('--only-positive', action='store_true', help="Whether to use only positive pseudo-labels.") 
     args = parser.parse_args()
 
     if args.sim_header == "tightTransf":
