@@ -110,7 +110,7 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
                         choices=["meanP", "seqLSTM", "seqTransf", "tightTransf"],
                         help="choice a similarity header.")
 
-    parser.add_argument("--pretrained_clip_name", default="clip_cn_vit-b-16.pt", type=str, help="Choose a CLIP version")
+    parser.add_argument("--pretrained_clip_name", default=None, type=str, help="Choose a CLIP version")
     parser.add_argument("--res", default=None, type=str, help="Enter a resume model path")
     parser.add_argument("--save_epoch", default=1, type=int, help="Save model every epoch")
     parser.add_argument('--modal_dropout', type=float, default=0.2, help='Modal Dropout Prob.')

@@ -82,7 +82,7 @@ class Wechat_DataLoader(Dataset):
                 words = self.tokenizer.tokenize("")
                 pass
             else:
-                words = self.tokenizer.tokenize(self.data[video_id]['title'])
+                words = self.tokenizer.tokenize(self.data[video_id]['title']) + self.tokenizer.tokenize(self.data[video_id]['asr'])
 
             words = [self.SPECIAL_TOKEN["CLS_TOKEN"]] + words
             total_length_with_CLS = self.max_words - 1
