@@ -918,27 +918,30 @@ def main():
             global_step = 0
             best_score = 0.00001
             for epoch in range(resumed_epoch, args.epochs):
-                if epoch == 0 or epoch == 10 or epoch == resumed_epoch:
-                    vis = False
-                    if epoch < 10:
-                        args.freeze_layer_num = 12
-                    else:
-                        args.freeze_layer_num = 6
-                        vis = True
-                    for name, param in model.module.net1.named_parameters():
-                        if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
-                            or name.find("ln_4.") == 0 or name.find("visual.proj") == 0:
-                                continue
-                        if name.find("clip.bert.encoder.layer.") == 0:
-                            layer_num = int(name.split(".")[4])
-                            if layer_num >= args.freeze_layer_num:
-                                param.requires_grad = True
-                                continue
-                        if name.find("clip") == 0:
-                            param.requires_grad = False
-                            print(name)
+                if args.no_clip:
+                    pass
+                else:
+                    if epoch == 0 or epoch == 10 or epoch == resumed_epoch:
+                        vis = False
+                        if epoch < 10:
+                            args.freeze_layer_num = 12
                         else:
-                            param.requires_grad = True
+                            args.freeze_layer_num = 6
+                            vis = True
+                        for name, param in model.module.net1.named_parameters():
+                            if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
+                                or name.find("ln_4.") == 0 or name.find("visual.proj") == 0:
+                                    continue
+                            if name.find("clip.bert.encoder.layer.") == 0:
+                                layer_num = int(name.split(".")[4])
+                                if layer_num >= args.freeze_layer_num:
+                                    param.requires_grad = True
+                                    continue
+                            if name.find("clip") == 0:
+                                param.requires_grad = False
+                                print(name)
+                            else:
+                                param.requires_grad = True
 
                 train_sampler.set_epoch(epoch)
                 tr_loss, tr_accu, global_step = finetune_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
