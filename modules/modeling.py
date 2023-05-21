@@ -209,7 +209,10 @@ class CLIP4Clip(CLIP4ClipPreTrainedModel):
         self.residual_mlp = ResidualMLP(model_info['embed_dim'], model_info['embed_dim']*4)
         self.clip = cn_CLIP(**model_info)
         resize_pos_embed(clip_state_dict, self.clip, prefix="module.")
-        self.clip.load_state_dict(clip_state_dict)
+        if self.task_config.no_clip:
+            pass
+        else:
+            self.clip.load_state_dict(clip_state_dict)
         
 
         self.linear_patch = '2d'
