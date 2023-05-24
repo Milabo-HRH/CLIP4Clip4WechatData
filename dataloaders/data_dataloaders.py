@@ -333,69 +333,96 @@ def dataloader_Wechat_ssl(args, tokenizer, pseudo_lbl_dict, itr=0):
     # pseudo_lbl_dict = pickle.load(open(pseudo_lbl, 'rb'))
     pseudo_idx = pseudo_lbl_dict['pseudo_idx']
     pseudo_target = pseudo_lbl_dict['pseudo_target']
-    nl_idx = pseudo_lbl_dict['nl_idx']
-    nl_mask = pseudo_lbl_dict['nl_mask']
-    lbl_idx = np.array(lbl_idx + pseudo_idx)
+    if not args.only_positive:
+        nl_idx = pseudo_lbl_dict['nl_idx']
+        nl_mask = pseudo_lbl_dict['nl_mask']
+    if args.only_positive:
+        lbl_idx = np.random.choice(lbl_idx, len(pseudo_idx))
+    lbl_idx = np.hstack((lbl_idx, pseudo_idx))
 
+    if not args.only_positive:
     #balance the labeled and unlabeled data 
-    if len(nl_idx) > len(lbl_idx):
-        exapand_labeled = len(nl_idx) // len(lbl_idx)
-        lbl_idx = np.hstack([lbl_idx for _ in range(exapand_labeled)])
+        if len(nl_idx) > len(lbl_idx):
+            exapand_labeled = len(nl_idx) // len(lbl_idx)
+            lbl_idx = np.hstack([lbl_idx for _ in range(exapand_labeled)])
 
-        if len(lbl_idx) < len(nl_idx):
-            diff = len(nl_idx) - len(lbl_idx)
-            lbl_idx = np.hstack((lbl_idx, np.random.choice(lbl_idx, diff)))
-        else:
-            assert len(lbl_idx) == len(nl_idx)
-
-    train_lbl_dataset = Wechat_Dataloader_ssl(
-        json_path=args.data_path,
-        features_path=args.features_path,
-        max_words=args.max_words,
-        feature_framerate=args.feature_framerate,
-        tokenizer=tokenizer,
-        indexs=lbl_idx,
-        max_frames=args.max_frames,
-        frame_order=args.train_frame_order,
-        slice_framepos=args.slice_framepos,
-        ocr = False,
-        pseudo_idx=pseudo_idx,
-        pseudo_target=pseudo_target,
-        nl_idx=nl_idx,
-        nl_mask=nl_mask,
-        num_thread_reader = args.num_thread_reader,
-    )
-    train_nl_dataset = Wechat_Dataloader_ssl(
-        json_path=args.data_path,
-        features_path=args.features_path,
-        max_words=args.max_words,
-        feature_framerate=args.feature_framerate,
-        tokenizer=tokenizer,
-        indexs=np.array(nl_idx),
-        max_frames=args.max_frames,
-        frame_order=args.train_frame_order,
-        slice_framepos=args.slice_framepos,
-        ocr = False,
-        pseudo_idx=pseudo_idx,
-        pseudo_target=pseudo_target,
-        nl_idx=nl_idx,
-        nl_mask=nl_mask,
-        num_thread_reader = args.num_thread_reader,
-    )
+            if len(lbl_idx) < len(nl_idx):
+                diff = len(nl_idx) - len(lbl_idx)
+                lbl_idx = np.hstack((lbl_idx, np.random.choice(lbl_idx, diff)))
+            else:
+                assert len(lbl_idx) == len(nl_idx)
+    if args.only_positive:
+        train_lbl_dataset = Wechat_Dataloader_ssl(
+            json_path=args.data_path,
+            features_path=args.features_path,
+            max_words=args.max_words,
+            feature_framerate=args.feature_framerate,
+            tokenizer=tokenizer,
+            indexs=lbl_idx,
+            max_frames=args.max_frames,
+            frame_order=args.train_frame_order,
+            slice_framepos=args.slice_framepos,
+            ocr = False,
+            pseudo_idx=pseudo_idx,
+            pseudo_target=pseudo_target,
+            num_thread_reader = args.num_thread_reader,
+            only_positive = args.only_positive,
+        )
+        train_sampler = torch.utils.data.distributed.DistributedSampler(train_lbl_dataset)
+    else:
+        train_lbl_dataset = Wechat_Dataloader_ssl(
+            json_path=args.data_path,
+            features_path=args.features_path,
+            max_words=args.max_words,
+            feature_framerate=args.feature_framerate,
+            tokenizer=tokenizer,
+            indexs=lbl_idx,
+            max_frames=args.max_frames,
+            frame_order=args.train_frame_order,
+            slice_framepos=args.slice_framepos,
+            ocr = False,
+            pseudo_idx=pseudo_idx,
+            pseudo_target=pseudo_target,
+            nl_idx=nl_idx,
+            nl_mask=nl_mask,
+            num_thread_reader = args.num_thread_reader,
+            
+        )
+        train_nl_dataset = Wechat_Dataloader_ssl(
+            json_path=args.data_path,
+            features_path=args.features_path,
+            max_words=args.max_words,
+            feature_framerate=args.feature_framerate,
+            tokenizer=tokenizer,
+            indexs=np.array(nl_idx),
+            max_frames=args.max_frames,
+            frame_order=args.train_frame_order,
+            slice_framepos=args.slice_framepos,
+            ocr = False,
+            pseudo_idx=pseudo_idx,
+            pseudo_target=pseudo_target,
+            nl_idx=nl_idx,
+            nl_mask=nl_mask,
+            num_thread_reader = args.num_thread_reader,
+        )
     lbl_loader = DataLoader(
         train_lbl_dataset,
-        sampler=RandomSampler(train_lbl_dataset),
+        pin_memory=True,
+        sampler=train_sampler,
+        shuffle=(train_sampler is None),
         batch_size=args.batch_size,
         num_workers=4,
         drop_last=True)
-
-    nl_loader = DataLoader(
-        train_nl_dataset,
-        sampler=RandomSampler(train_nl_dataset),
-        batch_size=args.batch_size,
-        num_workers=4,
-        drop_last=True)
-    return lbl_loader, nl_loader
+    if not args.only_positive:
+        nl_loader = DataLoader(
+            train_nl_dataset,
+            sampler=RandomSampler(train_nl_dataset),
+            batch_size=args.batch_size,
+            num_workers=4,
+            drop_last=True)
+        return lbl_loader, nl_loader
+    else:
+        return lbl_loader, len(train_lbl_dataset), train_sampler
 
 def dataloader_Wechat_unlbl(args, tokenizer):
     train_unlbl_dataset = Wechat_DataLoader_unlbl(

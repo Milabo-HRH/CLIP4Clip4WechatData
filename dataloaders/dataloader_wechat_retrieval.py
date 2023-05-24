@@ -14,7 +14,7 @@ import random
 import zipfile
 import torch
 from io import BytesIO
-from category_id_map import category_id_to_lv1id, category_id_to_lv2id, CATEGORY_ID_TO_FIRID, CATEGORY_ID_TO_SECID, lv2id_to_category_id
+from category_id_map import category_id_to_lv1id, category_id_to_lv2id, CATEGORY_ID_TO_FIRID, CATEGORY_ID_TO_SECID, lv2id_to_category_id, lv2id_to_lv1id
 
 class Wechat_DataLoader(Dataset):
     def __init__(
@@ -82,7 +82,7 @@ class Wechat_DataLoader(Dataset):
                 words = self.tokenizer.tokenize("")
                 pass
             else:
-                words = self.tokenizer.tokenize(self.data[video_id]['title']) + self.tokenizer.tokenize(self.data[video_id]['asr'])
+                words = self.tokenizer.tokenize(self.data[video_id]['title'])
 
             words = [self.SPECIAL_TOKEN["CLS_TOKEN"]] + words
             total_length_with_CLS = self.max_words - 1
@@ -431,7 +431,9 @@ class Wechat_Dataloader_ssl(Dataset):
             nl_idx=None,
             nl_mask=None,
             num_thread_reader=1,
+            only_positive = False
     ):
+        self.only_positive = only_positive
         self.json_path = os.path.join(json_path, "train.json")
         self.data = json.load(open(self.json_path, 'r'))
         self.nl = json.load(open(os.path.join(json_path, "unlabeled.json"), 'r'))
@@ -445,7 +447,9 @@ class Wechat_Dataloader_ssl(Dataset):
         
         if indexs is not None:
             indexs = np.array(indexs)
-            self.nl_mask = np.array(self.nl_mask)[indexs]
+            print(len(indexs))
+            if not self.only_positive:
+                self.nl_mask = np.array(self.nl_mask)[indexs]
             self.indexs = indexs
             self.data = np.array(self.data+self.nl)
             # if pseudo_idx is not None:
@@ -568,26 +572,48 @@ class Wechat_Dataloader_ssl(Dataset):
         
 
     def __getitem__(self, idx):
-        pairs_text, pairs_mask, pairs_segment = self._get_text(idx)
-        video, video_mask = self._get_rawvideo(idx)
-        labels = {}
-        # if idx < 90000:
-            # print(idx)
-        label = self.label[idx]
-        if self.indexs[idx] < 90000:
-            label = category_id_to_lv2id(label)
+        if not self.only_positive:
+            pairs_text, pairs_mask, pairs_segment = self._get_text(idx)
+            video, video_mask = self._get_rawvideo(idx)
+            labels = {}
+            # if idx < 90000:
+                # print(idx)
+            label = self.label[idx]
+            if self.indexs[idx] < 90000:
+                label = category_id_to_lv2id(label)
+            else:
+                if label == 'nan':
+                    label = -1
+                label = int(label)
+            label = torch.LongTensor([label])
+            # else:
+            #     label = category_id_to_lv2id(self.pseudo_target[idx-90000])
+            # labels['label'] = torch.LongTensor([label])
+            # labels['label_v1'] = torch.LongTensor([CATEGORY_ID_TO_FIRID[self.pseudo_target[idx-90000]]])
+            # labels['label_v2'] = labels['label']
+            return pairs_text, pairs_mask, pairs_segment, video, video_mask, label, self.indexs[idx], self.nl_mask[idx]
         else:
-            if label == 'nan':
-                label = -1
-            label = int(label)
-        label = torch.LongTensor([label])
-        # else:
-        #     label = category_id_to_lv2id(self.pseudo_target[idx-90000])
-        # labels['label'] = torch.LongTensor([label])
-        # labels['label_v1'] = torch.LongTensor([CATEGORY_ID_TO_FIRID[self.pseudo_target[idx-90000]]])
-        # labels['label_v2'] = labels['label']
-        return pairs_text, pairs_mask, pairs_segment, video, video_mask, label, self.indexs[idx], self.nl_mask[idx]
-
+            # print('only positive')
+            pairs_text, pairs_mask, pairs_segment = self._get_text(idx)
+            video, video_mask = self._get_rawvideo(idx)
+            labels = {}
+            # if idx < 90000:
+                # print(idx)
+            label = self.label[idx]
+            if self.indexs[idx] < 90000:
+                label = category_id_to_lv2id(label)
+                # print('trans: ', label)
+            else:
+                label = int(label)
+                # print("pass: ", label)
+            
+            labels['label'] = torch.LongTensor([label])
+            labels['label_v1'] = torch.LongTensor([lv2id_to_lv1id(label)])
+            # print(labels['label_v1'], end='')
+            labels['label_v2'] = torch.LongTensor([label])
+            # print(labels['label_v2'])
+            # print(len(labels))
+            return pairs_text, pairs_mask, pairs_segment, video, video_mask, labels
 class Wechat_DataLoader_unlbl(Dataset):
     def __init__(
             self,

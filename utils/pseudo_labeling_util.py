@@ -45,53 +45,77 @@ def pseudo_labeling(args, data_loader, model, itr):
             pairs_text, pairs_mask, pairs_segment, video, video_mask, indexs, _ = batch
             out_prob = []
             out_prob_nl = []
-            for _ in range(f_pass):
-                outputs = model(pairs_text, pairs_mask, pairs_segment, video, video_mask)
-                out_prob.append(F.softmax(outputs, dim=1)) #for selecting positive pseudo-labels
-                out_prob_nl.append(F.softmax(outputs/args.temp_nl, dim=1)) #for selecting negative pseudo-labels
-            out_prob = torch.stack(out_prob)
-            out_prob_nl = torch.stack(out_prob_nl)
-            out_std = torch.std(out_prob, dim=0)
-            out_std_nl = torch.std(out_prob_nl, dim=0)
-            out_prob = torch.mean(out_prob, dim=0)
-            out_prob_nl = torch.mean(out_prob_nl, dim=0)
-            max_value, max_idx = torch.max(out_prob, dim=1)
-            max_std = out_std.gather(1, max_idx.view(-1,1))
-            out_std_nl = out_std_nl.cpu().numpy()
-            
-            #selecting negative pseudo-labels
-            interm_nl_mask = ((out_std_nl < args.kappa_n) * (out_prob_nl.cpu().numpy() < args.tau_n)) *1
+            if args.only_positive:
+                
+                out_prob, out_std, max_value, max_idx = model(pairs_text, pairs_mask, pairs_segment, video, video_mask)
+                # out_prob = torch.Tensor(out_prob)
+                # out_std = torch.Tensor(out_std)
+                # max_value = torch.Tensor(max_value)
+                # max_idx = torch.Tensor(max_idx)
+                max_std = out_std.gather(1, max_idx.view(-1,1))
+                # interm_nl_mask = ((out_std_nl < args.kappa_n) * (out_prob_nl.cpu().numpy() < args.tau_n)) *1
+                idx_list.extend(indexs.numpy().tolist())
+                # gt_list.extend(targets.cpu().numpy().tolist())
+                target_list.extend(max_idx.cpu().numpy().tolist())
 
-            #manually setting the argmax value to zero
-            for enum, item in enumerate(max_idx.cpu().numpy()):
-                interm_nl_mask[enum, item] = 0
-            nl_mask.extend(interm_nl_mask)
-
-            idx_list.extend(indexs.numpy().tolist())
-            # gt_list.extend(targets.cpu().numpy().tolist())
-            target_list.extend(max_idx.cpu().numpy().tolist())
-
-            #selecting positive pseudo-labels
-            if not args.no_uncertainty:
-                selected_idx = (max_value>=args.tau_p) * (max_std.squeeze(1) < args.kappa_p)
+                #selecting positive pseudo-labels
+                if not args.no_uncertainty:
+                    selected_idx = (max_value>=args.tau_p) * (max_std.squeeze(1) < args.kappa_p) * (max_value<=args.tau_t)
+                else:
+                    selected_idx = max_value>=args.tau_p
+                pseudo_maxstd.extend(max_std.squeeze(1)[selected_idx].cpu().numpy().tolist())
+                pseudo_target.extend(max_idx[selected_idx].cpu().numpy().tolist())
+                pseudo_idx.extend(indexs[selected_idx].numpy().tolist())
+                
             else:
-                selected_idx = max_value>=args.tau_p
+                for _ in range(f_pass):
+                    outputs = model(pairs_text, pairs_mask, pairs_segment, video, video_mask)
+                    out_prob.append(F.softmax(outputs, dim=1)) #for selecting positive pseudo-labels
+                    out_prob_nl.append(F.softmax(outputs/args.temp_nl, dim=1)) #for selecting negative pseudo-labels
+                out_prob = torch.stack(out_prob)
+                out_prob_nl = torch.stack(out_prob_nl)
+                out_std = torch.std(out_prob, dim=0)
+                out_std_nl = torch.std(out_prob_nl, dim=0)
+                out_prob = torch.mean(out_prob, dim=0)
+                out_prob_nl = torch.mean(out_prob_nl, dim=0)
+                max_value, max_idx = torch.max(out_prob, dim=1)
+                max_std = out_std.gather(1, max_idx.view(-1,1))
+                out_std_nl = out_std_nl.cpu().numpy()
+                
+                #selecting negative pseudo-labels
+                interm_nl_mask = ((out_std_nl < args.kappa_n) * (out_prob_nl.cpu().numpy() < args.tau_n)) *1
 
-            pseudo_maxstd.extend(max_std.squeeze(1)[selected_idx].cpu().numpy().tolist())
-            pseudo_target.extend(max_idx[selected_idx].cpu().numpy().tolist())
-            pseudo_idx.extend(indexs[selected_idx].numpy().tolist())
-            # gt_target.extend(targets[selected_idx].cpu().numpy().tolist())
+                #manually setting the argmax value to zero
+                for enum, item in enumerate(max_idx.cpu().numpy()):
+                    interm_nl_mask[enum, item] = 0
+                nl_mask.extend(interm_nl_mask)
 
-            # loss = F.cross_entropy(outputs, targets.to(dtype=torch.long))
-            # prec1, prec5 = accuracy(outputs[selected_idx], targets[selected_idx], topk=(1, 5))
+                idx_list.extend(indexs.numpy().tolist())
+                # gt_list.extend(targets.cpu().numpy().tolist())
+                target_list.extend(max_idx.cpu().numpy().tolist())
 
-            # losses.update(loss.item(), inputs.shape[0])
-            # top1.update(prec1.item(), inputs.shape[0])
-            # top5.update(prec5.item(), inputs.shape[0])
-            batch_time.update(time.time() - end)
-            end = time.time()
-            if batch_idx % 10000 == 0:
-                logger.info("batch_idx: {}, batch_time: {}, data_time: {}".format(batch_idx, batch_time, data_time))
+                #selecting positive pseudo-labels
+                if not args.no_uncertainty:
+                    selected_idx = (max_value>=args.tau_p) * (max_std.squeeze(1) < args.kappa_p)
+                else:
+                    selected_idx = max_value>=args.tau_p
+
+                pseudo_maxstd.extend(max_std.squeeze(1)[selected_idx].cpu().numpy().tolist())
+                pseudo_target.extend(max_idx[selected_idx].cpu().numpy().tolist())
+                pseudo_idx.extend(indexs[selected_idx].numpy().tolist())
+                # gt_target.extend(targets[selected_idx].cpu().numpy().tolist())
+
+                # loss = F.cross_entropy(outputs, targets.to(dtype=torch.long))
+                # prec1, prec5 = accuracy(outputs[selected_idx], targets[selected_idx], topk=(1, 5))
+
+                # losses.update(loss.item(), inputs.shape[0])
+                # top1.update(prec1.item(), inputs.shape[0])
+                # top5.update(prec5.item(), inputs.shape[0])
+                batch_time.update(time.time() - end)
+                end = time.time()
+                if batch_idx % 10000 == 0:
+                    logger.info("batch_idx: {}, batch_time: {}, data_time: {}".format(batch_idx, batch_time, data_time))
+    
     pseudo_target = np.array(pseudo_target)
     # new_pseudo_target = []
     # for _, t in enumerate(pseudo_target):
@@ -127,30 +151,32 @@ def pseudo_labeling(args, data_loader, model, itr):
     # pseudo_labeling_acc = (pseudo_target == gt_target)*1
     # pseudo_labeling_acc = (sum(pseudo_labeling_acc)/len(pseudo_labeling_acc))*100
     # print(f'Pseudo-Labeling Accuracy (positive): {pseudo_labeling_acc}, Total Selected: {len(pseudo_idx)}')
+    if not args.only_positive:
+        pseudo_nl_mask = []
+        pseudo_nl_idx = []
+        # nl_gt_list = []
 
-    pseudo_nl_mask = []
-    pseudo_nl_idx = []
-    # nl_gt_list = []
+        for i in range(len(idx_list)):
+            if idx_list[i] not in pseudo_idx and sum(nl_mask[i]) > 0:
+                pseudo_nl_mask.append(nl_mask[i])
+                pseudo_nl_idx.append(idx_list[i])
+                # nl_gt_list.append(gt_list[i])
 
-    for i in range(len(idx_list)):
-        if idx_list[i] not in pseudo_idx and sum(nl_mask[i]) > 0:
-            pseudo_nl_mask.append(nl_mask[i])
-            pseudo_nl_idx.append(idx_list[i])
-            # nl_gt_list.append(gt_list[i])
-
-    # nl_gt_list = np.array(nl_gt_list)
-    pseudo_nl_mask = np.array(pseudo_nl_mask)
-    # one_hot_targets = np.eye(args.num_classes)[nl_gt_list]
-    # one_hot_targets = one_hot_targets - 1
-    # one_hot_targets = np.abs(one_hot_targets)
-    flat_pseudo_nl_mask = pseudo_nl_mask.reshape(1,-1)[0]
-    # flat_one_hot_targets = one_hot_targets.reshape(1,-1)[0]
-    # flat_one_hot_targets = flat_one_hot_targets[np.where(flat_pseudo_nl_mask == 1)]
-    flat_pseudo_nl_mask = flat_pseudo_nl_mask[np.where(flat_pseudo_nl_mask == 1)]
-    
-    # nl_accuracy = (flat_pseudo_nl_mask == flat_one_hot_targets)*1
-    # nl_accuracy_final = (sum(nl_accuracy)/len(nl_accuracy))*100
-    # print(f'Pseudo-Labeling Accuracy (negative): {nl_accuracy_final}, Total Selected: {len(nl_accuracy)}, Unique Samples: {len(pseudo_nl_mask)}')
-    pseudo_label_dict = {'pseudo_idx': pseudo_idx.tolist(), 'pseudo_target':pseudo_target.tolist(), 'nl_idx': pseudo_nl_idx, 'nl_mask': pseudo_nl_mask.tolist()}
-    
+        # nl_gt_list = np.array(nl_gt_list)
+        pseudo_nl_mask = np.array(pseudo_nl_mask)
+        # one_hot_targets = np.eye(args.num_classes)[nl_gt_list]
+        # one_hot_targets = one_hot_targets - 1
+        # one_hot_targets = np.abs(one_hot_targets)
+        flat_pseudo_nl_mask = pseudo_nl_mask.reshape(1,-1)[0]
+        # flat_one_hot_targets = one_hot_targets.reshape(1,-1)[0]
+        # flat_one_hot_targets = flat_one_hot_targets[np.where(flat_pseudo_nl_mask == 1)]
+        flat_pseudo_nl_mask = flat_pseudo_nl_mask[np.where(flat_pseudo_nl_mask == 1)]
+        
+        # nl_accuracy = (flat_pseudo_nl_mask == flat_one_hot_targets)*1
+        # nl_accuracy_final = (sum(nl_accuracy)/len(nl_accuracy))*100
+        # print(f'Pseudo-Labeling Accuracy (negative): {nl_accuracy_final}, Total Selected: {len(nl_accuracy)}, Unique Samples: {len(pseudo_nl_mask)}')
+        pseudo_label_dict = {'pseudo_idx': pseudo_idx.tolist(), 'pseudo_target':pseudo_target.tolist(), 'nl_idx': pseudo_nl_idx, 'nl_mask': pseudo_nl_mask.tolist()}
+    else:
+        pseudo_label_dict = {'pseudo_idx': pseudo_idx.tolist(), 'pseudo_target':pseudo_target.tolist()}
+        return pseudo_label_dict
     return len(pseudo_nl_mask), pseudo_label_dict

@@ -110,7 +110,7 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
                         choices=["meanP", "seqLSTM", "seqTransf", "tightTransf"],
                         help="choice a similarity header.")
 
-    parser.add_argument("--pretrained_clip_name", default=None, type=str, help="Choose a CLIP version")
+    parser.add_argument("--pretrained_clip_name", default="clip_cn_vit-b-16.pt", type=str, help="Choose a CLIP version")
     parser.add_argument("--res", default=None, type=str, help="Enter a resume model path")
     parser.add_argument("--save_epoch", default=1, type=int, help="Save model every epoch")
     parser.add_argument('--modal_dropout', type=float, default=0.2, help='Modal Dropout Prob.')
@@ -121,7 +121,7 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
     parser.add_argument('--do_ssl', action='store_true', help="Whether to run semi-supervised learning.")
     parser.add_argument('--start_itr', type=int, default=0, help="Start iteration.")
     parser.add_argument('--itr', type=int, default=10, help="Total iterations.")
-    parser.add_argument('--tau_p', default=0.70, type=float,
+    parser.add_argument('--tau_p', default=0.65, type=float,
                         help='confidece threshold for positive pseudo-labels, default 0.70')
     parser.add_argument('--tau_n', default=0.05, type=float,
                         help='confidece threshold for negative pseudo-labels, default 0.05')
@@ -133,8 +133,9 @@ def get_args(description='CLIP4Clip on Retrieval Task'):
                         help='temperature for generating negative pseduo-labels, default 2.0')
     parser.add_argument('--no_uncertainty', action='store_true', help="Whether to use uncertainty.")
     parser.add_argument('no_progress', action='store_true', help="Whether to use progress bar.")
-    parser.add_argument('--no_clip', action='store_true', help="Whether to use CLIP.") 
-    parser.add_argument('--only-positive', action='store_true', help="Whether to use only positive pseudo-labels.") 
+    parser.add_argument('--only_positive', action='store_true', help="Whether to use only positive pseudo-labels.") 
+    parser.add_argument('--no_load', action = 'store_true', help="Whether have loaded model.")
+    parser.add_argument('--tau_t', default = 0.90, type=float, help="Threshold for pseudo-labels.")
     args = parser.parse_args()
 
     if args.sim_header == "tightTransf":
@@ -221,7 +222,7 @@ def init_model(args, device, n_gpu, local_rank):
     return model
 
 def prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, local_rank, coef_lr=1.):
-    if args.do_finetune:
+    if args.do_finetune and not args.no_load:
         model_h = hmcn(args)
         # model_h.to(device)
         model_c = ConcatNet(model, model_h, args)
@@ -231,6 +232,7 @@ def prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, loc
             model_state_dict = torch.load(args.load_finetune, map_location='cpu')
             logger.info("Model loaded from %s", args.load_finetune)
             model.load_state_dict(state_dict=model_state_dict)
+        args.no_load = True
     if hasattr(model, 'module'):
         model = model.module
     
@@ -365,7 +367,7 @@ def finetune_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimize
         if n_gpu == 1:
             # multi-gpu does scattering it-self
             batch = tuple(t.to(device=device, non_blocking=True) for t in batch)
-
+        # print(len(batch))
         input_ids, input_mask, segment_ids, video, video_mask, groud_truth = batch
         loss, accuracy, pred_label_id, label = model(input_ids, segment_ids, input_mask, video, video_mask, groud_truth)
 
@@ -846,49 +848,122 @@ def main():
             optimizer, scheduler, model = prep_optimizer(args, model, -1, device, n_gpu, args.local_rank, coef_lr=coef_lr)
             unlbl_loader, _ = DATALOADER_DICT[args.datatype]["unlbl"](args, tokenizer)
             for itr in range(start_itr, args.itr):
-                
-                test_dataloader,test_length = DATALOADER_DICT[args.datatype]["test"](args, tokenizer)
-
-                if os.path.exists(f'{args.output_dir}/pseudo_labeling_iteration_{str(itr)}.pkl'):
-                    pseudo_label_dict = pickle.load(open(f'{args.output_dir}/pseudo_labeling_iteration_{str(itr)}.pkl', 'rb'))
-                else:
-                    unique_sel_neg, pseudo_label_dict = pseudo_labeling(args, unlbl_loader, model, itr)
-                    with open(os.path.join(args.output_dir, f'pseudo_labeling_iteration_{str(itr)}.pkl'),"wb") as f:
-                        pickle.dump(pseudo_label_dict,f)
-                        logger.info(f"Save pseudo_labeling_iteration_{str(itr)}.pkl")
-                lbl_loader, nl_loader = DATALOADER_DICT[args.datatype]["ssl"](args, tokenizer, pseudo_label_dict)
-                
-                resumed_epoch = 0
-                global_step = 0
-        
-                args.freeze_layer_num = 6
-                vis = True
-                for name, param in model.module.net1.named_parameters():
-                    if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
-                        or name.find("ln_4.") == 0 or name.find("visual.proj") == 0:
-                            continue
-                    if name.find("clip.bert.encoder.layer.") == 0:
-                        layer_num = int(name.split(".")[4])
-                        if layer_num >= args.freeze_layer_num:
-                            param.requires_grad = True
-                            continue
-                    if name.find("clip") == 0:
-                        param.requires_grad = False
-                        print(name)
+                if args.only_positive:
+                    if os.path.exists(f'{args.output_dir}/pseudo_labeling_iteration_{str(itr)}.pkl'):
+                        pseudo_label_dict = pickle.load(open(f'{args.output_dir}/pseudo_labeling_iteration_{str(itr)}.pkl', 'rb'))
                     else:
-                        param.requires_grad = True
+                        pseudo_label_dict = pseudo_labeling(args, unlbl_loader, model, itr)
+                        with open(os.path.join(args.output_dir, f'pseudo_labeling_iteration_{str(itr)}.pkl'),"wb") as f:
+                            pickle.dump(pseudo_label_dict,f)
+                            logger.info(f"Save pseudo_labeling_iteration_{str(itr)}.pkl")
+                    train_dataloader, train_length, train_sampler = DATALOADER_DICT[args.datatype]["ssl"](args, tokenizer, pseudo_label_dict)
+                        
+                    test_dataloader,test_length = DATALOADER_DICT[args.datatype]["test"](args, tokenizer)
+                    num_train_optimization_steps = (int(len(train_dataloader) + args.gradient_accumulation_steps - 1)
+                                                    / args.gradient_accumulation_steps) * args.epochs
 
-                for epoch in range(resumed_epoch, args.epochs):
-                    ssl_train(args, model, lbl_loader, nl_loader, device, n_gpu, optimizer, scheduler, global_step, itr=itr)
-                    if args.local_rank == 0:
-                        logger.info("Epoch %d/%s Finished", epoch + 1, args.epochs)
-                        F1_lv1, F1_lv2, F1_score, accu_lv1, accu_lv2 = eval_fine_epoch(args, model, test_dataloader, device, n_gpu,
-                                                global_step, local_rank=args.local_rank) 
-                        # if F1_score > best_score:
-                        logger.info("The F1 is: {:.4f}, the Lv1 F1 is: {:.4f}, the Lv2 F1 is {:.4f}, the Accuracy is {:.4f}, the Lv1 Accuracy is {:.4f}".format(F1_score, F1_lv1, F1_lv2, accu_lv2, accu_lv1))
-                        if (epoch+1)%args.save_epoch == 0:
-                            output_model_file = save_model(epoch, args, model, optimizer, tr_loss=None, type_name="ssl_{}".format(itr))
+                    coef_lr = args.coef_lr
+                    args.freeze_layer_num = 6
+                    vis = True
+                    for name, param in model.module.net1.named_parameters():
+                        if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
+                            or name.find("ln_4.") == 0 or name.find("visual.proj") == 0:
+                                continue
+                        if name.find("clip.bert.encoder.layer.") == 0:
+                            layer_num = int(name.split(".")[4])
+                            if layer_num >= args.freeze_layer_num:
+                                param.requires_grad = True
+                                continue
+                        if name.find("clip") == 0:
+                            param.requires_grad = False
+                            print(name)
+                        else:
+                            param.requires_grad = True
+                    optimizer, scheduler, model = prep_optimizer(args, model, num_train_optimization_steps, device, n_gpu, args.local_rank, coef_lr=coef_lr)
                     
+                    if args.local_rank == 0:
+                        logger.info("***** Running training *****")
+                        logger.info("  Num examples = %d", train_length)
+                        logger.info("  Batch size = %d", args.batch_size)
+                        logger.info("  Num steps = %d", num_train_optimization_steps * args.gradient_accumulation_steps)
+
+                    best_score = 0.00001
+                    best_output_model_file = "None"
+                    ## ##############################################################
+                    # resume optimizer state besides loss to continue train
+                    ## ##############################################################
+                    resumed_epoch = 0
+                    if args.resume_model:
+                        checkpoint = torch.load(args.resume_model, map_location='cpu')
+                        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+                        resumed_epoch = checkpoint['epoch']+1
+                        resumed_loss = checkpoint['loss']
+                    
+                    
+                    global_step = 0
+                    best_score = 0.00001
+                    args.only_positive = False
+                    for epoch in range(resumed_epoch, args.epochs):
+                        train_sampler.set_epoch(epoch)
+                        tr_loss, tr_accu, global_step = finetune_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
+                                                scheduler, global_step, local_rank=args.local_rank)
+                        if args.local_rank == 0:
+                            logger.info("Epoch %d/%s Finished, Train Loss: %f, Train Accuracy: %f", epoch + 1, args.epochs, tr_loss, tr_accu)
+                            F1_lv1, F1_lv2, F1_score, accu_lv1, accu_lv2 = eval_fine_epoch(args, model, test_dataloader, device, n_gpu,
+                                                    global_step, local_rank=args.local_rank) 
+                            
+                                
+                            logger.info("The F1 is: {:.4f}, the Lv1 F1 is: {:.4f}, the Accuracy is {:.4f}, the Lv1 Accuracy is {:.4f}".format(F1_score, F1_lv1, accu_lv2, accu_lv1))
+                            if F1_score > best_score:
+                                output_model_file = save_model(epoch, args, model, optimizer, tr_loss, type_name="finetuning")
+                                best_score = F1_score
+                    model_state_dict = torch.load(output_model_file, map_location='cpu')
+                    logger.info("Model loaded from %s", output_model_file)
+                    model.module.load_state_dict(state_dict=model_state_dict)
+                    args.only_positive = True
+                else:
+                    test_dataloader,test_length = DATALOADER_DICT[args.datatype]["test"](args, tokenizer)
+
+                    if os.path.exists(f'{args.output_dir}/pseudo_labeling_iteration_{str(itr)}.pkl'):
+                        pseudo_label_dict = pickle.load(open(f'{args.output_dir}/pseudo_labeling_iteration_{str(itr)}.pkl', 'rb'))
+                    else:
+                        unique_sel_neg, pseudo_label_dict = pseudo_labeling(args, unlbl_loader, model, itr)
+                        with open(os.path.join(args.output_dir, f'pseudo_labeling_iteration_{str(itr)}.pkl'),"wb") as f:
+                            pickle.dump(pseudo_label_dict,f)
+                            logger.info(f"Save pseudo_labeling_iteration_{str(itr)}.pkl")
+                    lbl_loader, nl_loader = DATALOADER_DICT[args.datatype]["ssl"](args, tokenizer, pseudo_label_dict)
+                    
+                    resumed_epoch = 0
+                    global_step = 0
+            
+                    args.freeze_layer_num = 6
+                    vis = True
+                    for name, param in model.module.net1.named_parameters():
+                        if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
+                            or name.find("ln_4.") == 0 or name.find("visual.proj") == 0:
+                                continue
+                        if name.find("clip.bert.encoder.layer.") == 0:
+                            layer_num = int(name.split(".")[4])
+                            if layer_num >= args.freeze_layer_num:
+                                param.requires_grad = True
+                                continue
+                        if name.find("clip") == 0:
+                            param.requires_grad = False
+                            print(name)
+                        else:
+                            param.requires_grad = True
+
+                    for epoch in range(resumed_epoch, args.epochs):
+                        ssl_train(args, model, lbl_loader, nl_loader, device, n_gpu, optimizer, scheduler, global_step, itr=itr)
+                        if args.local_rank == 0:
+                            logger.info("Epoch %d/%s Finished", epoch + 1, args.epochs)
+                            F1_lv1, F1_lv2, F1_score, accu_lv1, accu_lv2 = eval_fine_epoch(args, model, test_dataloader, device, n_gpu,
+                                                    global_step, local_rank=args.local_rank) 
+                            # if F1_score > best_score:
+                            logger.info("The F1 is: {:.4f}, the Lv1 F1 is: {:.4f}, the Lv2 F1 is {:.4f}, the Accuracy is {:.4f}, the Lv1 Accuracy is {:.4f}".format(F1_score, F1_lv1, F1_lv2, accu_lv2, accu_lv1))
+                            if (epoch+1)%args.save_epoch == 0:
+                                output_model_file = save_model(epoch, args, model, optimizer, tr_loss=None, type_name="ssl_{}".format(itr))
+                        
         else:
             train_dataloader, train_length, train_sampler = DATALOADER_DICT[args.datatype]["val"](args, tokenizer)
             test_dataloader,test_length = DATALOADER_DICT[args.datatype]["test"](args, tokenizer)
@@ -919,30 +994,27 @@ def main():
             global_step = 0
             best_score = 0.00001
             for epoch in range(resumed_epoch, args.epochs):
-                if args.no_clip:
-                    pass
-                else:
-                    if epoch == 0 or epoch == 10 or epoch == resumed_epoch:
-                        vis = False
-                        if epoch < 10:
-                            args.freeze_layer_num = 12
-                        else:
-                            args.freeze_layer_num = 6
-                            vis = True
-                        for name, param in model.module.net1.named_parameters():
-                            if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
-                                or name.find("ln_4.") == 0 or name.find("visual.proj") == 0:
-                                    continue
-                            if name.find("clip.bert.encoder.layer.") == 0:
-                                layer_num = int(name.split(".")[4])
-                                if layer_num >= args.freeze_layer_num:
-                                    param.requires_grad = True
-                                    continue
-                            if name.find("clip") == 0:
-                                param.requires_grad = False
-                                print(name)
-                            else:
+                if epoch == 0 or epoch == 10 or epoch == resumed_epoch:
+                    vis = False
+                    if epoch < 10:
+                        args.freeze_layer_num = 12
+                    else:
+                        args.freeze_layer_num = 6
+                        vis = True
+                    for name, param in model.module.net1.named_parameters():
+                        if name.find("ln_final.") == 0 or name.find("clip.text_projection") == 0 or name.find("clip.logit_scale") == 0 \
+                            or name.find("ln_4.") == 0 or name.find("visual.proj") == 0:
+                                continue
+                        if name.find("clip.bert.encoder.layer.") == 0:
+                            layer_num = int(name.split(".")[4])
+                            if layer_num >= args.freeze_layer_num:
                                 param.requires_grad = True
+                                continue
+                        if name.find("clip") == 0:
+                            param.requires_grad = False
+                            print(name)
+                        else:
+                            param.requires_grad = True
 
                 train_sampler.set_epoch(epoch)
                 tr_loss, tr_accu, global_step = finetune_epoch(epoch, args, model, train_dataloader, device, n_gpu, optimizer,
